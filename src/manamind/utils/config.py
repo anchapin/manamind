@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -30,7 +30,7 @@ class ForgeConfig(BaseModel):
     """Forge integration configuration."""
 
     installation_path: Optional[str] = None
-    java_opts: list = Field(default_factory=lambda: ["-Xmx4G", "-server"])
+    java_opts: List[str] = Field(default_factory=lambda: ["-Xmx4G", "-server"])
     port: int = 25333
     timeout: float = 30.0
     use_py4j: bool = True
@@ -130,7 +130,9 @@ class Config(BaseModel):
             updates: Dictionary of updates to apply
         """
 
-        def update_nested_dict(d: dict, u: dict) -> dict:
+        def update_nested_dict(
+            d: Dict[str, Any], u: Dict[str, Any]
+        ) -> Dict[str, Any]:
             for k, v in u.items():
                 if isinstance(v, dict):
                     d[k] = update_nested_dict(d.get(k, {}), v)

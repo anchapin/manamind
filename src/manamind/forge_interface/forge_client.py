@@ -9,6 +9,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
+from subprocess import Popen
 from typing import Any, Dict, List, Optional
 
 try:
@@ -72,7 +73,7 @@ class ForgeClient:
         self.use_py4j = use_py4j and PY4J_AVAILABLE
 
         # Runtime state
-        self.forge_process: Optional[subprocess.Popen] = None
+        self.forge_process: Optional[Popen[Any]] = None
         self.gateway: Optional[Any] = None
         self.forge_api: Optional[Any] = None
         self.is_connected = False

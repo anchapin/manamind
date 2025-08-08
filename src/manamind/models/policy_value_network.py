@@ -5,7 +5,7 @@ both policy (action prediction) and value (position evaluation) estimation
 in a single network, similar to AlphaZero.
 """
 
-from typing import Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -190,7 +190,7 @@ class PolicyValueNetwork(nn.Module):
 
     def get_action_value_pairs(
         self, game_state: Any, legal_actions: Any
-    ) -> list:
+    ) -> List[Tuple[Any, float]]:
         """Get (action, value) pairs for all legal actions.
 
         This is useful for MCTS to get both policy priors and value estimates.
@@ -212,7 +212,7 @@ class PolicyValueNetwork(nn.Module):
         for action in legal_actions:
             # Placeholder - need to implement action encoding
             prior_prob = 1.0 / len(legal_actions)  # Uniform for now
-            action_values.append((action, prior_prob, value.item()))
+            action_values.append((action, prior_prob))
 
         return action_values
 
@@ -244,7 +244,7 @@ class PolicyValueLoss(nn.Module):
         target_policy: torch.Tensor,
         target_value: torch.Tensor,
         model: nn.Module,
-    ) -> Tuple[torch.Tensor, dict]:
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """Compute the combined loss.
 
         Args:

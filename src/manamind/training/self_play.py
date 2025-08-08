@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from numpy import ndarray
 from tqdm import tqdm
 
 from manamind.core.action import Action
@@ -32,14 +33,16 @@ class SelfPlayGame:
 
     def __init__(self, game_id: str):
         self.game_id = game_id
-        self.history: List[Tuple[GameState, Action, float, np.ndarray]] = []
+        self.history: List[
+            Tuple[GameState, Action, float, ndarray[Any, Any]]
+        ] = []
         self.winner: Optional[int] = None
         self.num_moves = 0
         self.start_time = time.time()
         self.end_time: Optional[float] = None
 
     def add_move(
-        self, state: GameState, action: Action, mcts_policy: np.ndarray
+        self, state: GameState, action: Action, mcts_policy: ndarray[Any, Any]
     ) -> None:
         """Add a move to the game history.
 
@@ -83,7 +86,7 @@ class SelfPlayGame:
 
     def get_training_examples(
         self,
-    ) -> List[Tuple[GameState, np.ndarray, float]]:
+    ) -> List[Tuple[GameState, ndarray[Any, Any], float]]:
         """Extract training examples from this game.
 
         Returns:
@@ -112,7 +115,7 @@ class SelfPlayTrainer:
         data_manager: Optional[
             Any
         ] = None,  # TrainingDataManager not implemented yet
-        config: Optional[Dict] = None,
+        config: Optional[Dict[str, Any]] = None,
     ):
         """Initialize self-play trainer.
 
@@ -133,7 +136,9 @@ class SelfPlayTrainer:
         # Training state
         self.current_iteration = 0
         self.total_games_played = 0
-        self.training_examples: List[Tuple[GameState, np.ndarray, float]] = []
+        self.training_examples: List[
+            Tuple[GameState, ndarray[Any, Any], float]
+        ] = []
         self.performance_history: List[Dict[str, Any]] = []
 
         # Create MCTS agents for self-play
@@ -143,7 +148,7 @@ class SelfPlayTrainer:
             "c_puct": self.config["c_puct"],
         }
 
-    def _default_config(self) -> Dict:
+    def _default_config(self) -> Dict[str, Any]:
         """Default training configuration."""
         return {
             # Self-play parameters
@@ -215,7 +220,7 @@ class SelfPlayTrainer:
 
     def _generate_self_play_games(
         self,
-    ) -> List[Tuple[GameState, np.ndarray, float]]:
+    ) -> List[Tuple[GameState, ndarray[Any, Any], float]]:
         """Generate self-play games and extract training examples."""
         num_games = self.config["games_per_iteration"]
         all_examples = []
@@ -432,7 +437,7 @@ class SelfPlayTrainer:
             f"Loaded checkpoint from iteration {self.current_iteration}"
         )
 
-    def get_training_stats(self) -> Dict:
+    def get_training_stats(self) -> Dict[str, Any]:
         """Get current training statistics."""
         return {
             "current_iteration": self.current_iteration,
