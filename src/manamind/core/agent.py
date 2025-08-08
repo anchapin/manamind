@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from manamind.core.action import Action, ActionSpace
+from manamind.core.action import Action, ActionSpace, ActionType
 from manamind.core.game_state import GameState
 
 
@@ -125,7 +125,11 @@ class MCTSNode:
             return float("inf")
 
         exploitation = self.total_value / self.visits
-        exploration = c * math.sqrt(math.log(self.parent.visits) / self.visits) if self.parent else 0.0
+        exploration = (
+            c * math.sqrt(math.log(self.parent.visits) / self.visits)
+            if self.parent
+            else 0.0
+        )
         return exploitation + exploration
 
     def select_child(self) -> MCTSNode:
@@ -243,10 +247,14 @@ class MCTSAgent(Agent):
         )
         if best_child.action:
             return best_child.action
-        
+
         # Fallback if no action found
         legal_actions = self.action_space.get_legal_actions(game_state)
-        return random.choice(legal_actions) if legal_actions else Action(ActionType.PASS, self.player_id)
+        return (
+            random.choice(legal_actions)
+            if legal_actions
+            else Action(ActionType.PASS, self.player_id)
+        )
 
     def _set_prior_probabilities(self, node: MCTSNode) -> None:
         """Set prior probabilities for actions using the policy network."""

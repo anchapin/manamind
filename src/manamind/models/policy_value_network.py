@@ -5,7 +5,7 @@ both policy (action prediction) and value (position evaluation) estimation
 in a single network, similar to AlphaZero.
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import torch
 import torch.nn as nn
@@ -188,7 +188,9 @@ class PolicyValueNetwork(nn.Module):
         _, value = self.forward(game_state)
         return value
 
-    def get_action_value_pairs(self, game_state: Any, legal_actions: Any) -> list:
+    def get_action_value_pairs(
+        self, game_state: Any, legal_actions: Any
+    ) -> list:
         """Get (action, value) pairs for all legal actions.
 
         This is useful for MCTS to get both policy priors and value estimates.
