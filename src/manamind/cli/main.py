@@ -52,7 +52,7 @@ def train(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose logging"
     ),
-):
+) -> None:
     """Train the ManaMind agent using self-play."""
     setup_logging(verbose)
 
@@ -128,7 +128,7 @@ def eval(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose logging"
     ),
-):
+) -> None:
     """Evaluate a trained ManaMind model."""
     setup_logging(verbose)
 
@@ -176,7 +176,7 @@ def forge_test(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose logging"
     ),
-):
+) -> None:
     """Test connection to Forge game engine."""
     setup_logging(verbose)
 
@@ -222,7 +222,7 @@ def play(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose logging"
     ),
-):
+) -> None:
     """Play a game against the ManaMind agent."""
     setup_logging(verbose)
 
@@ -233,7 +233,7 @@ def play(
 
 
 @app.command()
-def info():
+def info() -> None:
     """Show ManaMind system information."""
     console.print("[bold blue]ManaMind System Information[/bold blue]")
 
@@ -276,7 +276,7 @@ def info():
         console.print(f"[red]Error getting system info: {e}[/red]")
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     app()
 
