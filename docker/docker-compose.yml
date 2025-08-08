@@ -1,0 +1,210 @@
+# Docker Compose configuration for ManaMind development and training
+
+version: '3.8'
+
+services:
+  # Main training service
+  manamind-train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: training
+      args:
+        PYTHON_VERSION: "3.11"
+        CUDA_VERSION: "11.8"
+    image: manamind:training
+    container_name: manamind-train
+    volumes:
+      - ../src:/app/src:ro
+      - ../configs:/app/configs:ro
+      - ../scripts:/app/scripts:ro
+      - training-data:/app/data
+      - training-checkpoints:/app/checkpoints
+      - training-logs:/app/logs
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - MANAMIND_LOG_LEVEL=INFO
+      - MANAMIND_DATA_DIR=/app/data
+      - MANAMIND_CHECKPOINT_DIR=/app/checkpoints
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["manamind", "train", "--config", "configs/base.yaml", "--verbose"]
+    profiles: ["training"]
+
+  # Development service with Jupyter
+  manamind-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    image: manamind:development
+    container_name: manamind-dev
+    ports:
+      - "8888:8888"  # Jupyter
+      - "6006:6006"  # TensorBoard
+    volumes:
+      - ..:/app
+      - dev-data:/app/data
+      - jupyter-config:/home/manamind/.jupyter
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - JUPYTER_ENABLE_LAB=yes
+      - PYTHONPATH=/app/src
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: |
+      bash -c "
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+        --NotebookApp.token='' --NotebookApp.password='' \
+        --NotebookApp.allow_origin='*' --NotebookApp.base_url='/'
+      "
+    profiles: ["development"]
+
+  # Distributed training coordinator
+  manamind-coordinator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: training
+    image: manamind:training
+    container_name: manamind-coordinator
+    volumes:
+      - ../configs:/app/configs:ro
+      - shared-checkpoints:/app/checkpoints
+      - coordinator-logs:/app/logs
+    environment:
+      - RAY_HEAD_NODE=true
+      - RAY_REDIS_PORT=6379
+      - MANAMIND_DISTRIBUTED=true
+    command: |
+      bash -c "
+        ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 &&
+        manamind train --config configs/distributed.yaml --distributed
+      "
+    ports:
+      - "8265:8265"  # Ray Dashboard
+      - "6379:6379"  # Ray Redis
+    profiles: ["distributed"]
+
+  # Distributed training worker
+  manamind-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: training
+    image: manamind:training
+    volumes:
+      - shared-checkpoints:/app/checkpoints
+      - worker-logs:/app/logs
+    environment:
+      - RAY_HEAD_NODE=false
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      replicas: 2
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: |
+      bash -c "
+        ray start --address=manamind-coordinator:6379 &&
+        sleep infinity
+      "
+    depends_on:
+      - manamind-coordinator
+    profiles: ["distributed"]
+
+  # Evaluation service
+  manamind-eval:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: evaluation
+    image: manamind:evaluation
+    container_name: manamind-eval
+    volumes:
+      - training-checkpoints:/app/checkpoints:ro
+      - evaluation-logs:/app/logs
+    environment:
+      - MANAMIND_LOG_LEVEL=INFO
+    command: ["manamind", "eval", "/app/checkpoints/latest.pt", "--opponent", "forge"]
+    profiles: ["evaluation"]
+
+  # TensorBoard service
+  tensorboard:
+    image: tensorflow/tensorflow:latest
+    container_name: manamind-tensorboard
+    ports:
+      - "6006:6006"
+    volumes:
+      - training-logs:/logs:ro
+    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6006
+    profiles: ["monitoring"]
+
+  # Weights & Biases local service (optional)
+  wandb-local:
+    image: wandb/local:latest
+    container_name: manamind-wandb
+    ports:
+      - "8080:8080"
+    volumes:
+      - wandb-data:/vol
+    environment:
+      - LICENSE_KEY=${WANDB_LICENSE_KEY}
+      - HOST=0.0.0.0
+      - PORT=8080
+    profiles: ["monitoring", "wandb"]
+
+  # Database for experiment tracking
+  postgres:
+    image: postgres:15
+    container_name: manamind-postgres
+    environment:
+      - POSTGRES_DB=manamind
+      - POSTGRES_USER=manamind
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-manamind123}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    profiles: ["database"]
+
+volumes:
+  training-data:
+    driver: local
+  training-checkpoints:
+    driver: local
+  training-logs:
+    driver: local
+  dev-data:
+    driver: local
+  shared-checkpoints:
+    driver: local
+  coordinator-logs:
+    driver: local
+  worker-logs:
+    driver: local
+  evaluation-logs:
+    driver: local
+  jupyter-config:
+    driver: local
+  wandb-data:
+    driver: local
+  postgres-data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge

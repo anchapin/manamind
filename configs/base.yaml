@@ -1,0 +1,198 @@
+# ManaMind Base Configuration
+# This file contains the default configuration for training and evaluation
+
+# Model Configuration
+model:
+  # Game state encoder settings
+  state_encoder:
+    vocab_size: 50000  # Number of unique cards/tokens
+    embed_dim: 512
+    hidden_dim: 1024
+    num_zones: 6  # hand, battlefield, graveyard, library, exile, command
+    max_cards_per_zone: 200
+    output_dim: 2048
+
+  # Policy-Value network settings
+  policy_value_network:
+    state_dim: 2048
+    hidden_dim: 1024
+    num_residual_blocks: 8
+    num_attention_heads: 8
+    action_space_size: 10000
+    dropout_rate: 0.1
+    use_attention: true
+
+# Training Configuration
+training:
+  # Self-play settings
+  self_play:
+    games_per_iteration: 100
+    max_game_length: 200
+    examples_buffer_size: 100000
+    
+  # MCTS settings for self-play
+  mcts:
+    simulations: 800
+    time_limit: 1.0  # seconds
+    c_puct: 1.0
+    
+  # Neural network training
+  neural_training:
+    batch_size: 64
+    epochs_per_iteration: 10
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    value_loss_weight: 1.0
+    l2_regularization: 0.0001
+    
+  # Training loop
+  training_loop:
+    total_iterations: 1000
+    evaluation_frequency: 10
+    checkpoint_frequency: 10
+    
+  # Optimization
+  optimizer:
+    type: "adamw"
+    lr: 0.001
+    weight_decay: 0.0001
+    betas: [0.9, 0.999]
+    
+  # Learning rate scheduling
+  lr_scheduler:
+    type: "cosine_annealing"
+    T_max: 1000
+    eta_min: 0.00001
+
+# Evaluation Configuration
+evaluation:
+  # Number of games for evaluation
+  num_games: 50
+  
+  # Opponents to evaluate against
+  opponents:
+    - forge_easy
+    - forge_medium  
+    - forge_hard
+    - random
+    
+  # Evaluation metrics
+  metrics:
+    - win_rate
+    - average_game_length
+    - average_decision_time
+
+# Forge Integration
+forge:
+  # Path to Forge installation (will be auto-detected if not specified)
+  installation_path: null
+  
+  # Java options for running Forge
+  java_opts:
+    - "-Xmx4G"
+    - "-server"
+    - "-XX:+UseG1GC"
+    
+  # Communication settings
+  port: 25333
+  timeout: 30.0
+  use_py4j: true
+  
+  # Default decks for training
+  default_decks:
+    red_aggro: "decks/red_aggro.dck"
+    blue_control: "decks/blue_control.dck"
+    green_midrange: "decks/green_midrange.dck"
+
+# Data Management
+data:
+  # Directories
+  checkpoints_dir: "data/checkpoints"
+  logs_dir: "data/logs"
+  game_data_dir: "data/game_logs"
+  card_data_dir: "data/cards"
+  
+  # Training data settings
+  max_training_examples: 100000
+  data_compression: true
+  save_replays: false
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # File logging
+  file_logging: true
+  log_file: "logs/manamind.log"
+  max_log_size: "100MB"
+  backup_count: 5
+  
+  # Console logging
+  console_logging: true
+  rich_console: true
+  
+  # Experiment tracking
+  wandb:
+    enabled: false
+    project: "manamind"
+    entity: null
+    tags: ["self-play", "mtg"]
+  
+  tensorboard:
+    enabled: true
+    log_dir: "logs/tensorboard"
+
+# Hardware Configuration
+hardware:
+  # Device selection
+  device: "auto"  # auto, cpu, cuda, cuda:0, etc.
+  
+  # Multi-GPU training
+  use_multiple_gpus: false
+  
+  # Memory optimization
+  mixed_precision: true
+  gradient_checkpointing: false
+  
+  # Parallel processing
+  num_workers: 4
+  prefetch_factor: 2
+
+# Phase-Specific Overrides
+phases:
+  # Phase 1: Foundation & Forge Integration (3-6 months)
+  phase1:
+    training:
+      total_iterations: 500
+      games_per_iteration: 50
+      mcts:
+        simulations: 400  # Reduced for faster iteration
+    
+    evaluation:
+      target_win_rate: 0.8  # 80% against Forge AI
+      opponents: ["forge_easy", "forge_medium"]
+  
+  # Phase 2: Mastery & MTGA Adaptation (6-12 months) 
+  phase2:
+    training:
+      total_iterations: 2000
+      games_per_iteration: 200
+      mcts:
+        simulations: 1200  # Increased for better play
+    
+    evaluation:
+      target_win_rate: 0.7  # Against stronger opponents
+      opponents: ["forge_hard", "previous_best_model"]
+  
+  # Phase 3: Superhuman Performance (12-24 months)
+  phase3:
+    training:
+      total_iterations: 5000
+      games_per_iteration: 500
+      mcts:
+        simulations: 1600  # Maximum quality
+    
+    evaluation:
+      target_win_rate: 0.6  # Against expert-level play
+      opponents: ["mtga_diamond", "mtga_mythic"]
