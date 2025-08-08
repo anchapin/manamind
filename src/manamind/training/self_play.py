@@ -32,7 +32,7 @@ class SelfPlayGame:
 
     def __init__(self, game_id: str):
         self.game_id = game_id
-        self.history: List[Tuple[GameState, Action, float]] = []
+        self.history: List[Tuple[GameState, Action, float, np.ndarray]] = []
         self.winner: Optional[int] = None
         self.num_moves = 0
         self.start_time = time.time()
@@ -133,8 +133,8 @@ class SelfPlayTrainer:
         # Training state
         self.current_iteration = 0
         self.total_games_played = 0
-        self.training_examples = []
-        self.performance_history = []
+        self.training_examples: List[Tuple[GameState, np.ndarray, float]] = []
+        self.performance_history: List[Dict[str, Any]] = []
 
         # Create MCTS agents for self-play
         self.mcts_config = {

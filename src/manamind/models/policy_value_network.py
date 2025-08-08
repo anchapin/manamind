@@ -5,7 +5,7 @@ both policy (action prediction) and value (position evaluation) estimation
 in a single network, similar to AlphaZero.
 """
 
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -95,7 +95,7 @@ class PolicyValueNetwork(nn.Module):
         # Initialize weights
         self._initialize_weights()
 
-    def _initialize_weights(self):
+    def _initialize_weights(self) -> None:
         """Initialize network weights using He initialization."""
         for module in self.modules():
             if isinstance(module, nn.Linear):
@@ -108,7 +108,7 @@ class PolicyValueNetwork(nn.Module):
                 nn.init.constant_(module.bias, 0)
                 nn.init.constant_(module.weight, 1.0)
 
-    def forward(self, game_state) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, game_state: Any) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through the network.
 
         Args:
@@ -154,7 +154,7 @@ class PolicyValueNetwork(nn.Module):
         return policy_logits, value
 
     def predict_action_probs(
-        self, game_state, temperature: float = 1.0
+        self, game_state: Any, temperature: float = 1.0
     ) -> torch.Tensor:
         """Get action probabilities from the policy head.
 
@@ -176,7 +176,7 @@ class PolicyValueNetwork(nn.Module):
 
         return probs
 
-    def evaluate_position(self, game_state) -> torch.Tensor:
+    def evaluate_position(self, game_state: Any) -> torch.Tensor:
         """Get position evaluation from the value head.
 
         Args:
@@ -188,7 +188,7 @@ class PolicyValueNetwork(nn.Module):
         _, value = self.forward(game_state)
         return value
 
-    def get_action_value_pairs(self, game_state, legal_actions) -> list:
+    def get_action_value_pairs(self, game_state: Any, legal_actions: Any) -> list:
         """Get (action, value) pairs for all legal actions.
 
         This is useful for MCTS to get both policy priors and value estimates.
@@ -280,13 +280,13 @@ class PolicyValueLoss(nn.Module):
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
-            "l2_loss": l2_loss.item(),
+            "l2_loss": float(l2_loss),
         }
 
         return total_loss, loss_dict
 
 
-def create_policy_value_network(**kwargs) -> PolicyValueNetwork:
+def create_policy_value_network(**kwargs: Any) -> PolicyValueNetwork:
     """Factory function to create a policy-value network with default settings.
 
     Args:
@@ -306,4 +306,12 @@ def create_policy_value_network(**kwargs) -> PolicyValueNetwork:
     }
     defaults.update(kwargs)
 
-    return PolicyValueNetwork(**defaults)
+    return PolicyValueNetwork(
+        state_dim=int(defaults["state_dim"]),
+        hidden_dim=int(defaults["hidden_dim"]),
+        num_residual_blocks=int(defaults["num_residual_blocks"]),
+        num_attention_heads=int(defaults["num_attention_heads"]),
+        action_space_size=int(defaults["action_space_size"]),
+        dropout_rate=float(defaults["dropout_rate"]),
+        use_attention=bool(defaults["use_attention"]),
+    )
