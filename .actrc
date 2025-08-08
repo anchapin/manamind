@@ -1,0 +1,19 @@
+# Act configuration for local GitHub Actions testing
+# This file optimizes 'act' performance and behavior
+
+# Use smaller, faster images when possible
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P ubuntu-22.04=catthehacker/ubuntu:act-22.04
+-P ubuntu-20.04=catthehacker/ubuntu:act-20.04
+
+# Speed up builds by reusing images
+--reuse
+
+# Show more helpful output
+--verbose
+
+# Don't rebuild containers unnecessarily  
+--use-gitignore
+
+# Platform settings for consistency
+--platform linux/amd64

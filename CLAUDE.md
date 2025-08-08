@@ -58,9 +58,29 @@ ManaMind is an AI agent designed to play Magic: The Gathering (MTG) at a superhu
 
 ## Development Commands
 
-*Note: This project is in early planning phase. Commands will be added as the codebase develops.*
+### Code Quality & Formatting (CRITICAL)
+Always run these commands before committing to prevent CI failures:
+```bash
+# Format code with black (79 character limit to match CI)
+black --line-length 79 src tests
 
-Expected future commands:
+# Sort imports
+isort src tests
+
+# Check for linting issues 
+flake8 src tests
+
+# Type checking
+mypy src
+
+# Run tests with coverage
+pytest --cov=src/manamind --cov-report=xml --cov-report=term-missing -v
+
+# Run all quality checks at once (recommended before commit)
+black --line-length 79 src tests && isort src tests && flake8 src tests && mypy src
+```
+
+### Training Commands (Future)
 ```bash
 # Training commands (future)
 python train.py --config configs/base.yaml
@@ -83,6 +103,66 @@ python mtga_interface.py --test-mode
 - Future: `mtga_interface/` - Arena client integration
 
 ## Development Guidelines
+
+### Code Quality Standards (MANDATORY)
+**CRITICAL: Always follow these practices to prevent CI failures and PR delays:**
+
+1. **Pre-commit Code Quality Checks:**
+   - Run `black --line-length 79 src tests` before every commit
+   - Run `isort src tests` to fix import ordering  
+   - Run `flake8 src tests` and fix ALL violations before committing
+   - Run `mypy src` and address type issues
+   - Use the one-liner: `black --line-length 79 src tests && isort src tests && flake8 src tests && mypy src`
+
+2. **Import Management:**
+   - Remove unused imports immediately when refactoring
+   - Use isort to maintain consistent import ordering
+   - Avoid importing modules that aren't used
+
+3. **Line Length & Formatting:**
+   - Maintain 79-character line limit (matches CI configuration)  
+   - Let black handle most formatting automatically
+   - Break long lines in function arguments, not comments
+   - Use meaningful variable names even if they're longer
+
+4. **Code Writing Best Practices:**
+   - Write code that passes linting from the start
+   - Fix linting issues as you code, not after
+   - Use type hints consistently
+   - Remove debug prints and unused variables immediately
+
+### Automation Recommendations
+To reduce PR iteration cycles, consider setting up:
+
+1. **Pre-commit hooks** (add to `.pre-commit-config.yaml`):
+   ```yaml
+   repos:
+   - repo: https://github.com/psf/black
+     rev: 25.1.0
+     hooks:
+     - id: black
+       args: [--line-length=79]
+   - repo: https://github.com/PyCQA/isort
+     rev: 5.13.2
+     hooks:
+     - id: isort
+   - repo: https://github.com/PyCQA/flake8
+     rev: 7.3.0
+     hooks:
+     - id: flake8
+   ```
+
+2. **IDE/Editor Integration:**
+   - Configure VS Code/PyCharm to run black on save
+   - Enable flake8 linting in your editor
+   - Set up mypy type checking in your IDE
+
+3. **Git Aliases** (add to ~/.gitconfig):
+   ```bash
+   [alias]
+       lint = !black --line-length 79 src tests && isort src tests && flake8 src tests && mypy src
+       commit-clean = !git add . && git lint && git commit
+   ```
 
 ### Code Organization
 - Separate training environment (Forge) from deployment environment (MTGA)
