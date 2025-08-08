@@ -7,9 +7,9 @@ This module contains:
 - Training data management
 """
 
-from manamind.training.self_play import SelfPlayTrainer
-from manamind.training.neural_trainer import NeuralNetworkTrainer
 from manamind.training.data_manager import TrainingDataManager
+from manamind.training.neural_trainer import NeuralNetworkTrainer
+from manamind.training.self_play import SelfPlayTrainer
 
 __all__ = [
     "SelfPlayTrainer",

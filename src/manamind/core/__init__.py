@@ -6,13 +6,13 @@ This module contains the fundamental building blocks of the ManaMind system:
 - Base agent interface
 """
 
-from manamind.core.game_state import GameState, GameStateEncoder
 from manamind.core.action import Action, ActionSpace
 from manamind.core.agent import Agent
+from manamind.core.game_state import GameState, GameStateEncoder
 
 __all__ = [
     "GameState",
-    "GameStateEncoder", 
+    "GameStateEncoder",
     "Action",
     "ActionSpace",
     "Agent",

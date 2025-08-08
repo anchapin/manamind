@@ -11,6 +11,6 @@ from manamind.forge_interface.state_parser import ForgeStateParser
 
 __all__ = [
     "ForgeClient",
-    "ForgeGameRunner", 
+    "ForgeGameRunner",
     "ForgeStateParser",
 ]
