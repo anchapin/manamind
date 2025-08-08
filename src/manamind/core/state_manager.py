@@ -272,7 +272,7 @@ class IncrementalStateManager:
         """Get current depth in the delta stack."""
         return len(self.delta_stack)
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear state cache to free memory."""
         self._state_cache.clear()
         self._current_state = None
@@ -305,7 +305,7 @@ class StatePool:
             self._in_use.add(id(state))
         return state
 
-    def release(self, state: GameState):
+    def release(self, state: GameState) -> None:
         """Return a state to the pool."""
         state_id = id(state)
         with self._lock:
@@ -315,7 +315,7 @@ class StatePool:
                 self._reset_state(state)
                 self._available_states.append(state)
 
-    def _reset_state(self, state: GameState):
+    def _reset_state(self, state: GameState) -> None:
         """Reset state to initial condition."""
         state.turn_number = 1
         state.phase = "main"

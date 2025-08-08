@@ -135,13 +135,12 @@ def eval(
     console.print("[bold blue]Starting ManaMind evaluation...[/bold blue]")
 
     try:
-        import torch
+        # import torch
 
         # from manamind.evaluation.evaluator import ModelEvaluator
-
         # Load model
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        checkpoint = torch.load(model_path, map_location=device)
+        # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # checkpoint = torch.load(model_path, map_location=device)
 
         # Create evaluator
         # evaluator = ModelEvaluator(

@@ -8,7 +8,7 @@ import logging
 import random
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -17,8 +17,11 @@ from tqdm import tqdm
 from manamind.core.action import Action
 from manamind.core.agent import MCTSAgent
 from manamind.core.game_state import GameState, create_standard_game_start
-from manamind.forge_interface import ForgeClient  # ForgeGameRunner not implemented yet
+from manamind.forge_interface import (  # ForgeGameRunner not implemented yet
+    ForgeClient,
+)
 from manamind.models.policy_value_network import PolicyValueNetwork
+
 # from manamind.training.data_manager import TrainingDataManager
 
 logger = logging.getLogger(__name__)
@@ -106,7 +109,9 @@ class SelfPlayTrainer:
         self,
         policy_value_network: PolicyValueNetwork,
         forge_client: Optional[ForgeClient] = None,
-        data_manager: Optional[Any] = None,  # TrainingDataManager not implemented yet
+        data_manager: Optional[
+            Any
+        ] = None,  # TrainingDataManager not implemented yet
         config: Optional[Dict] = None,
     ):
         """Initialize self-play trainer.
@@ -262,7 +267,9 @@ class SelfPlayTrainer:
         """Play a game using the Forge engine."""
         try:
             # Create game runner
-            game_runner = ForgeGameRunner(self.forge_client)
+            # game_runner = ForgeGameRunner(self.forge_client)
+            # Not implemented yet
+            game_runner = None  # Placeholder
 
             # Create MCTS agents
             agent1 = MCTSAgent(
