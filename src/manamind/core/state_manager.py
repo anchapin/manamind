@@ -149,9 +149,8 @@ class IncrementalStateManager:
         self.base_state = base_state
         self.delta_stack: List[StateDelta] = []
         self._current_state: Optional[GameState] = None
-        self._state_cache: Dict[int, GameState] = (
-            {}
-        )  # Cache states at different depths
+        self._state_cache: Dict[int, GameState] = {}
+        # Cache states at different depths
         self._max_cache_size = 100
 
     def push_action(self, action: Action) -> GameState:
@@ -424,7 +423,7 @@ class BatchStateProcessor:
         """Group states into batches for processing."""
         batches = []
         for i in range(0, len(states), self.batch_size):
-            batch = states[i : i + self.batch_size]
+            batch = states[i: i + self.batch_size]
             batches.append(batch)
         return batches
 

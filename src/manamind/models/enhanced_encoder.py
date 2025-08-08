@@ -1,4 +1,4 @@
-"""Enhanced neural network encoder for comprehensive MTG game state representation.
+"""Enhanced neural network encoder for comprehensive MTG game states.
 
 This module provides advanced encoding capabilities for the full complexity of
 Magic: The Gathering, including multi-modal encoding, attention mechanisms,
@@ -6,7 +6,7 @@ and optimized representations.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 import torch.nn as nn
