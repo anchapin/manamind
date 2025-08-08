@@ -119,7 +119,7 @@ class Action:
 
     def get_all_targets(self) -> List[Any]:
         """Get all targets referenced by this action."""
-        targets = []
+        targets: List[Any] = []
         if self.card:
             targets.append(self.card)
         if self.target:
@@ -290,8 +290,9 @@ class PlayLandExecutor(ActionExecutor):
         player = new_state.players[action.player_id]
 
         # Move card from hand to battlefield
-        player.hand.remove_card(action.card)
-        player.battlefield.add_card(action.card)
+        if action.card:
+            player.hand.remove_card(action.card)
+            player.battlefield.add_card(action.card)
 
         # Update lands played this turn
         player.lands_played_this_turn += 1
@@ -314,7 +315,8 @@ class CastSpellExecutor(ActionExecutor):
         # TODO: Proper mana payment logic
 
         # Move card from hand to stack
-        player.hand.remove_card(action.card)
+        if action.card:
+            player.hand.remove_card(action.card)
         new_state.stack.append(
             {
                 "card": action.card,

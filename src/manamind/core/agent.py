@@ -125,7 +125,7 @@ class MCTSNode:
             return float("inf")
 
         exploitation = self.total_value / self.visits
-        exploration = c * math.sqrt(math.log(self.parent.visits) / self.visits)
+        exploration = c * math.sqrt(math.log(self.parent.visits) / self.visits) if self.parent else 0.0
         return exploitation + exploration
 
     def select_child(self) -> MCTSNode:
@@ -161,12 +161,12 @@ class MCTSAgent(Agent):
     def __init__(
         self,
         player_id: int,
-        policy_network=None,
-        value_network=None,
+        policy_network: Any = None,
+        value_network: Any = None,
         simulations: int = 1000,
         simulation_time: float = 1.0,
         c_puct: float = 1.0,
-    ):
+    ) -> None:
         """Initialize MCTS agent.
 
         Args:
@@ -241,7 +241,12 @@ class MCTSAgent(Agent):
         best_child = max(
             root.children.values(), key=lambda child: child.visits
         )
-        return best_child.action
+        if best_child.action:
+            return best_child.action
+        
+        # Fallback if no action found
+        legal_actions = self.action_space.get_legal_actions(game_state)
+        return random.choice(legal_actions) if legal_actions else Action(ActionType.PASS, self.player_id)
 
     def _set_prior_probabilities(self, node: MCTSNode) -> None:
         """Set prior probabilities for actions using the policy network."""
@@ -329,10 +334,10 @@ class NeuralAgent(Agent):
     def __init__(
         self,
         player_id: int,
-        policy_value_network,
+        policy_value_network: Any,
         action_space: Optional[ActionSpace] = None,
         temperature: float = 1.0,
-    ):
+    ) -> None:
         """Initialize neural agent.
 
         Args:

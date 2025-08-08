@@ -150,7 +150,7 @@ class Player(BaseModel):
     exile: Zone
     command_zone: Zone
 
-    def __init__(self, player_id: int, **data):
+    def __init__(self, player_id: int, **data: Any) -> None:
         # Initialize zones with proper player ownership
         zones = {
             "hand": Zone(name="hand", owner=player_id),
