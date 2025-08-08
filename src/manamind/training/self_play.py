@@ -165,7 +165,8 @@ class SelfPlayTrainer:
         """Run the main training loop.
 
         Args:
-            num_iterations: Number of training iterations (uses config default if None)
+            num_iterations: Number of training iterations
+                (uses config default if None)
         """
         num_iterations = num_iterations or self.config["training_iterations"]
 
@@ -241,9 +242,8 @@ class SelfPlayTrainer:
                     logger.error(f"Error in self-play game: {e}")
                     continue
 
-        logger.info(
-            f"Generated {len(all_examples)} training examples from {games_completed} games"
-        )
+        msg = f"Generated {len(all_examples)} training examples from {games_completed} games"  # noqa: E501
+        logger.info(msg)
         return all_examples
 
     def _play_single_game(self) -> Optional[SelfPlayGame]:
@@ -299,7 +299,7 @@ class SelfPlayTrainer:
         return None
 
     def _play_simulation_game(self) -> Optional[SelfPlayGame]:
-        """Play a game using pure Python simulation (for testing without Forge)."""
+        """Play a game using pure Python simulation (testing without Forge)."""
         try:
             # Create initial game state
             game_state = create_standard_game_start()
@@ -353,9 +353,8 @@ class SelfPlayTrainer:
             excess = len(self.training_examples) - buffer_size
             self.training_examples = self.training_examples[excess:]
 
-            logger.info(
-                f"Trimmed training buffer to {len(self.training_examples)} examples"
-            )
+            msg = f"Trimmed training buffer to {len(self.training_examples)} examples"  # noqa: E501
+            logger.info(msg)
 
     def _train_network(self) -> None:
         """Train the neural network on collected examples."""

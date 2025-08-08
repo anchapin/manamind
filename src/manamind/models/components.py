@@ -103,9 +103,8 @@ class AttentionLayer(nn.Module):
         super().__init__()
 
         if hidden_dim % num_heads != 0:
-            raise ValueError(
-                f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"
-            )
+            msg = f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"  # noqa: E501
+            raise ValueError(msg)
 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads

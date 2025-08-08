@@ -102,11 +102,12 @@ class ForgeClient:
     def _validate_setup(self) -> None:
         """Validate that required dependencies are available."""
         if not self.use_py4j and not JPYPE_AVAILABLE:
-            raise ForgeConnectionError(
-                "Neither Py4J nor JPype is available. Please install one of them:\n"
+            msg = (
+                "Neither Py4J nor JPype is available. Please install one:\n"
                 "pip install py4j  # or\n"
                 "pip install JPype1"
             )
+            raise ForgeConnectionError(msg)
 
         if not self.forge_path.exists():
             logger.warning(

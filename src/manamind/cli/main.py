@@ -248,9 +248,8 @@ def info():
 
         if torch.cuda.is_available():
             console.print(f"CUDA Device: {torch.cuda.get_device_name()}")
-            console.print(
-                f"CUDA Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB"
-            )
+            memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            console.print(f"CUDA Memory: {memory_gb:.1f} GB")
 
         # Check for optional dependencies
         try:
@@ -259,7 +258,8 @@ def info():
             console.print(f"Py4J Version: {py4j.__version__}")
         except ImportError:
             console.print(
-                "[yellow]Py4J not available (needed for Forge integration)[/yellow]"
+                "[yellow]Py4J not available (needed for Forge integration)"
+                "[/yellow]"
             )
 
         try:
@@ -268,7 +268,8 @@ def info():
             console.print(f"JPype Version: {jpype.__version__}")
         except ImportError:
             console.print(
-                "[yellow]JPype not available (alternative for Forge integration)[/yellow]"
+                "[yellow]JPype not available (alternative for Forge "
+                "integration)[/yellow]"
             )
 
     except Exception as e:

@@ -116,7 +116,8 @@ class PolicyValueNetwork(nn.Module):
 
         Returns:
             Tuple of (policy_logits, value):
-                - policy_logits: Raw logits for action probabilities [batch_size, action_space_size]
+                - policy_logits: Raw logits for action probabilities
+                  [batch_size, action_space_size]
                 - value: Estimated win probability [-1, 1] [batch_size, 1]
         """
         # Encode game state if needed
@@ -245,16 +246,19 @@ class PolicyValueLoss(nn.Module):
         """Compute the combined loss.
 
         Args:
-            policy_logits: Predicted policy logits [batch_size, action_space_size]
+            policy_logits: Predicted policy logits
+                [batch_size, action_space_size]
             value_pred: Predicted values [batch_size, 1]
-            target_policy: Target policy distribution [batch_size, action_space_size]
+            target_policy: Target policy distribution
+                [batch_size, action_space_size]
             target_value: Target values [batch_size, 1]
             model: The model (for L2 regularization)
 
         Returns:
-            Tuple of (total_loss, loss_dict) where loss_dict contains individual components
+            Tuple of (total_loss, loss_dict) where loss_dict contains
+                individual components
         """
-        # Policy loss - cross entropy between predicted and target distributions
+        # Policy loss - cross entropy between predicted and target
         policy_loss = -torch.sum(
             target_policy * F.log_softmax(policy_logits, dim=-1), dim=-1
         )
