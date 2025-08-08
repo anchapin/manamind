@@ -270,10 +270,10 @@ class PolicyValueLoss(nn.Module):
         value_loss = F.mse_loss(value_pred.squeeze(), target_value.squeeze())
 
         # L2 regularization
-        l2_loss = 0.0
+        l2_loss: torch.Tensor = torch.tensor(0.0)
         for param in model.parameters():
             l2_loss += torch.sum(param**2)
-        l2_loss *= self.l2_reg
+        l2_loss = l2_loss * self.l2_reg
 
         # Combined loss
         total_loss = policy_loss + self.value_weight * value_loss + l2_loss

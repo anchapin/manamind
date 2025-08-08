@@ -181,7 +181,10 @@ class ForgeClient:
         start_time = time.time()
 
         while time.time() - start_time < self.timeout:
-            if self.forge_process.poll() is not None:
+            if (
+                self.forge_process is not None
+                and self.forge_process.poll() is not None
+            ):
                 # Process has terminated
                 stdout, stderr = self.forge_process.communicate()
                 raise ForgeConnectionError(
@@ -304,11 +307,13 @@ class ForgeClient:
             raise ForgeConnectionError("Not connected to Forge")
 
         try:
+            if self.forge_api is None:
+                raise ForgeConnectionError("Forge API not initialized")
             game_id = self.forge_api.createGame(
                 deck1_path, deck2_path, game_format
             )
             logger.info(f"Created game {game_id}")
-            return game_id
+            return str(game_id)
 
         except Exception as e:
             raise ForgeConnectionError(f"Failed to create game: {e}")
@@ -329,8 +334,11 @@ class ForgeClient:
             raise ForgeConnectionError("Not connected to Forge")
 
         try:
+            if self.forge_api is None:
+                raise ForgeConnectionError("Forge API not initialized")
             state_json = self.forge_api.getGameState(game_id)
-            return json.loads(state_json)
+            result: Dict[str, Any] = json.loads(str(state_json))
+            return result
 
         except Exception as e:
             raise ForgeConnectionError(f"Failed to get game state: {e}")
@@ -352,9 +360,11 @@ class ForgeClient:
             raise ForgeConnectionError("Not connected to Forge")
 
         try:
+            if self.forge_api is None:
+                raise ForgeConnectionError("Forge API not initialized")
             action_json = json.dumps(action_data)
             result = self.forge_api.sendAction(game_id, action_json)
-            return result
+            return bool(result)
 
         except Exception as e:
             raise ForgeConnectionError(f"Failed to send action: {e}")
@@ -375,8 +385,11 @@ class ForgeClient:
             raise ForgeConnectionError("Not connected to Forge")
 
         try:
+            if self.forge_api is None:
+                raise ForgeConnectionError("Forge API not initialized")
             actions_json = self.forge_api.getLegalActions(game_id)
-            return json.loads(actions_json)
+            result: List[Dict[str, Any]] = json.loads(str(actions_json))
+            return result
 
         except Exception as e:
             raise ForgeConnectionError(f"Failed to get legal actions: {e}")
@@ -394,7 +407,9 @@ class ForgeClient:
             return True
 
         try:
-            return self.forge_api.isGameOver(game_id)
+            if self.forge_api is None:
+                return True
+            return bool(self.forge_api.isGameOver(game_id))
         except Exception as e:
             logger.error(f"Error checking if game is over: {e}")
             return True
@@ -412,16 +427,19 @@ class ForgeClient:
             return None
 
         try:
-            return self.forge_api.getWinner(game_id)
+            if self.forge_api is None:
+                return None
+            result = self.forge_api.getWinner(game_id)
+            return int(result) if result is not None else None
         except Exception as e:
             logger.error(f"Error getting winner: {e}")
             return None
 
-    def __enter__(self):
+    def __enter__(self) -> "ForgeClient":
         """Context manager entry."""
         self.start_forge()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.stop_forge()

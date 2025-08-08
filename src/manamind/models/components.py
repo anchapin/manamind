@@ -5,7 +5,7 @@ the ManaMind architecture.
 """
 
 import math
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
@@ -44,7 +44,7 @@ class ResidualBlock(nn.Module):
 
         # Activation function
         if activation == "relu":
-            self.activation = nn.ReLU()
+            self.activation: Union[nn.ReLU, nn.GELU, nn.SiLU] = nn.ReLU()
         elif activation == "gelu":
             self.activation = nn.GELU()
         elif activation == "swish":
@@ -194,7 +194,8 @@ class AttentionLayer(nn.Module):
         output = self.output_dropout(output)
 
         # Residual connection
-        return output + residual
+        output_tensor: torch.Tensor = output + residual
+        return output_tensor
 
 
 class PositionalEncoding(nn.Module):
@@ -244,8 +245,14 @@ class PositionalEncoding(nn.Module):
         Returns:
             Input with positional encoding added
         """
-        x = x + self.pe[:, : x.size(1)]
-        return self.dropout(x)
+        pe_buffer = self.pe
+        assert isinstance(
+            pe_buffer, torch.Tensor
+        ), "PE buffer should be a tensor"
+        pe_slice: torch.Tensor = pe_buffer[:, : x.size(1)]
+        x = x + pe_slice
+        result: torch.Tensor = self.dropout(x)
+        return result
 
 
 class CardEmbedding(nn.Module):
@@ -337,7 +344,8 @@ class CardEmbedding(nn.Module):
         combined = torch.cat(
             [card_emb, mana_emb, type_emb, power_emb, tough_emb], dim=-1
         )
-        return self.combiner(combined)
+        result: torch.Tensor = self.combiner(combined)
+        return result
 
 
 class GatingMechanism(nn.Module):
@@ -369,4 +377,5 @@ class GatingMechanism(nn.Module):
         """
         gate = torch.sigmoid(self.gate_projection(x))
         content = self.content_projection(x)
-        return gate * content
+        result: torch.Tensor = gate * content
+        return result

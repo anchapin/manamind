@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import torch
 
 from manamind.core.action import Action
-from manamind.core.game_state import GameState
+from manamind.core.game_state import GameState, create_empty_game_state
 
 
 @dataclass
@@ -45,7 +45,7 @@ class StateHash:
     def __hash__(self) -> int:
         return self._hash
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, StateHash):
             return False
         return self._hash == other._hash
@@ -77,7 +77,7 @@ class CopyOnWriteGameState:
 
         if base_state is None:
             # Create new state
-            self._data = GameState.create_empty_game_state()
+            self._data = create_empty_game_state()
             self._ref_count = 1
             self._is_cow = False
             self._parent = None
@@ -124,8 +124,8 @@ class CopyOnWriteGameState:
             active_player=self._data.active_player,
             priority_player=self._data.priority_player,
             player_lives=(
-                self._data.players[0].life,
-                self._data.players[1].life,
+                int(self._data.players[0].life),
+                int(self._data.players[1].life),
             ),
             zone_sizes=tuple(
                 len(getattr(player, zone).cards)
@@ -223,13 +223,13 @@ class IncrementalStateManager:
         for i, (old_player, new_player) in enumerate(
             zip(old_state.players, new_state.players)
         ):
-            changes = {}
+            changes: Dict[str, Any] = {}
             if old_player.life != new_player.life:
                 changes["life"] = (old_player.life, new_player.life)
             if old_player.mana_pool != new_player.mana_pool:
                 changes["mana_pool"] = (
-                    old_player.mana_pool,
-                    new_player.mana_pool,
+                    dict(old_player.mana_pool),
+                    dict(new_player.mana_pool),
                 )
             if changes:
                 delta.player_changes[i] = changes
@@ -288,7 +288,7 @@ class StatePool:
 
         # Pre-allocate states
         for _ in range(initial_size):
-            state = GameState.create_empty_game_state()
+            state = create_empty_game_state()
             self._available_states.append(state)
 
     def acquire(self) -> GameState:
@@ -300,7 +300,7 @@ class StatePool:
                 return state
 
         # Pool exhausted, create new state
-        state = GameState.create_empty_game_state()
+        state = create_empty_game_state()
         with self._lock:
             self._in_use.add(id(state))
         return state
@@ -351,7 +351,7 @@ class BatchStateProcessor:
         self.state_pool = StatePool()
 
     def process_states_parallel(
-        self, states: List[GameState], operation: str, **kwargs
+        self, states: List[GameState], operation: str, **kwargs: Any
     ) -> List[Any]:
         """Process multiple states in parallel."""
 
@@ -365,7 +365,7 @@ class BatchStateProcessor:
             raise ValueError(f"Unknown operation: {operation}")
 
     def _batch_encode(
-        self, states: List[GameState], encoder=None
+        self, states: List[GameState], encoder: Any = None
     ) -> List[torch.Tensor]:
         """Encode multiple states in parallel."""
         if encoder is None:
@@ -388,7 +388,7 @@ class BatchStateProcessor:
         return results
 
     def _batch_legal_actions(
-        self, states: List[GameState], action_space=None
+        self, states: List[GameState], action_space: Any = None
     ) -> List[List[Action]]:
         """Generate legal actions for multiple states in parallel."""
         if action_space is None:
@@ -404,7 +404,7 @@ class BatchStateProcessor:
             return [future.result() for future in futures]
 
     def _batch_evaluate(
-        self, states: List[GameState], evaluator=None
+        self, states: List[GameState], evaluator: Any = None
     ) -> List[float]:
         """Evaluate multiple states in parallel."""
         if evaluator is None:
@@ -449,7 +449,7 @@ class TranspositionTable:
                 return self._table[state_hash][key]
         return None
 
-    def put(self, state_hash: StateHash, key: str, value: Any):
+    def put(self, state_hash: StateHash, key: str, value: Any) -> None:
         """Store value for state and key."""
         with self._lock:
             if state_hash not in self._table:
@@ -487,13 +487,13 @@ class TranspositionTable:
         visit_count: int,
         value_estimate: float,
         action_values: Dict[str, float],
-    ):
+    ) -> None:
         """Update MCTS data for state."""
         self.put(state_hash, "visit_count", visit_count)
         self.put(state_hash, "value_estimate", value_estimate)
         self.put(state_hash, "action_values", action_values)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all cached data."""
         with self._lock:
             self._table.clear()
@@ -505,14 +505,14 @@ class TranspositionTable:
             return {
                 "size": len(self._table),
                 "max_size": self.max_size,
-                "hit_rate": 0.0,  # TODO: Track hit rate
+                "hit_rate": 0,  # TODO: Track hit rate
             }
 
 
 class StateCompressionManager:
     """Manages state compression for memory efficiency during training."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.compressor = StateCompressor()
         self._compressed_cache: Dict[StateHash, bytes] = {}
 
@@ -578,4 +578,5 @@ class StateCompressor:
         import pickle
 
         decompressed = gzip.decompress(data)
-        return pickle.loads(decompressed)
+        result: GameState = pickle.loads(decompressed)
+        return result

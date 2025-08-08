@@ -266,40 +266,29 @@ class SelfPlayTrainer:
     def _play_forge_game(self) -> Optional[SelfPlayGame]:
         """Play a game using the Forge engine."""
         try:
-            # Create game runner
+            # ForgeGameRunner not yet implemented
+            print(
+                "Warning: ForgeGameRunner not yet implemented, returning None"
+            )
+            return None
+
+            # TODO: Implement when ForgeGameRunner is ready:
             # game_runner = ForgeGameRunner(self.forge_client)
-            # Not implemented yet
-            game_runner = None  # Placeholder
-
-            # Create MCTS agents
-            agent1 = MCTSAgent(
-                player_id=0,
-                policy_network=self.network,
-                value_network=self.network,
-                **self.mcts_config,
-            )
-
-            agent2 = MCTSAgent(
-                player_id=1,
-                policy_network=self.network,
-                value_network=self.network,
-                **self.mcts_config,
-            )
-
-            # Run the game
-            game_result = game_runner.play_game(agent1, agent2)
-
-            if game_result:
-                # Convert to SelfPlayGame format
-                game = SelfPlayGame(game_result.game_id)
-
-                # Add moves from game history
-                for state, action, mcts_policy in game_result.history:
-                    game.add_move(state, action, mcts_policy)
-
-                # Finalize with winner
-                game.finalize_game(game_result.winner)
-                return game
+            # agent1 = MCTSAgent(
+            #     player_id=0, policy_network=self.network,
+            #     value_network=self.network, **self.mcts_config
+            # )
+            # agent2 = MCTSAgent(
+            #     player_id=1, policy_network=self.network,
+            #     value_network=self.network, **self.mcts_config
+            # )
+            # game_result = game_runner.play_game(agent1, agent2)
+            # if game_result:
+            #     game = SelfPlayGame(game_result.game_id)
+            #     for state, action, mcts_policy in game_result.history:
+            #         game.add_move(state, action, mcts_policy)
+            #     game.finalize_game(game_result.winner)
+            #     return game
 
         except Exception as e:
             logger.error(f"Error in Forge game: {e}")

@@ -6,7 +6,7 @@ and optimized representations.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -90,9 +90,11 @@ class CardEmbeddingSystem(nn.Module):
 
         # Power/Toughness/Loyalty
         if hasattr(card, "current_power") and card.current_power() is not None:
-            power_emb = self.power_embedding(
-                torch.tensor([float(card.current_power())])
+            current_power = card.current_power()
+            power_value = (
+                float(current_power) if current_power is not None else 0.0
             )
+            power_emb = self.power_embedding(torch.tensor([power_value]))
             features.append(power_emb)
         else:
             features.append(torch.zeros(self.embed_dim // 16))
@@ -101,8 +103,14 @@ class CardEmbeddingSystem(nn.Module):
             hasattr(card, "current_toughness")
             and card.current_toughness() is not None
         ):
+            current_toughness = card.current_toughness()
+            toughness_value = (
+                float(current_toughness)
+                if current_toughness is not None
+                else 0.0
+            )
             toughness_emb = self.toughness_embedding(
-                torch.tensor([float(card.current_toughness())])
+                torch.tensor([toughness_value])
             )
             features.append(toughness_emb)
         else:
@@ -141,7 +149,8 @@ class CardEmbeddingSystem(nn.Module):
 
         # Project to final dimension and normalize
         output = self.projector(combined)
-        return self.layer_norm(output)
+        result: torch.Tensor = self.layer_norm(output)
+        return result
 
 
 class ZoneEncoder(nn.Module):
@@ -204,8 +213,8 @@ class HandEncoder(ZoneEncoder):
 
         # Aggregate with weighted average
         hand_encoding = attn_output.mean(dim=0)
-
-        return self.output_proj(hand_encoding)
+        result: torch.Tensor = self.output_proj(hand_encoding)
+        return result
 
 
 class BattlefieldEncoder(ZoneEncoder):
@@ -244,8 +253,8 @@ class BattlefieldEncoder(ZoneEncoder):
 
         # Aggregate battlefield state
         aggregated = battlefield_encoding.mean(dim=0)
-
-        return self.output_proj(aggregated)
+        result: torch.Tensor = self.output_proj(aggregated)
+        return result
 
 
 class SequentialZoneEncoder(ZoneEncoder):
@@ -276,7 +285,8 @@ class SequentialZoneEncoder(ZoneEncoder):
         lstm_out, (hidden, _) = self.lstm(embeddings)
 
         # Use final hidden state as zone representation
-        return hidden.view(-1)
+        result: torch.Tensor = hidden.view(-1)
+        return result
 
 
 class PlayerStateEncoder(nn.Module):
@@ -334,7 +344,8 @@ class PlayerStateEncoder(nn.Module):
 
         # Combine all features
         combined = torch.cat([life_emb, mana_emb, misc_emb], dim=0)
-        return self.output_proj(combined)
+        result: torch.Tensor = self.output_proj(combined)
+        return result
 
 
 class GlobalStateEncoder(nn.Module):
@@ -399,7 +410,8 @@ class GlobalStateEncoder(nn.Module):
 
         # Combine features
         combined = torch.cat([phase_emb, turn_emb, stack_emb], dim=0)
-        return self.output_proj(combined)
+        result: torch.Tensor = self.output_proj(combined)
+        return result
 
 
 class StateFusionNetwork(nn.Module):
@@ -431,7 +443,9 @@ class StateFusionNetwork(nn.Module):
         )
 
         if config.use_layer_norm:
-            self.layer_norm = nn.LayerNorm(config.output_dim)
+            self.layer_norm: Optional[nn.LayerNorm] = nn.LayerNorm(
+                config.output_dim
+            )
         else:
             self.layer_norm = None
 
@@ -440,8 +454,8 @@ class StateFusionNetwork(nn.Module):
         zone_encodings: Dict[int, Dict[str, torch.Tensor]],
         player_encodings: List[torch.Tensor],
         global_encoding: torch.Tensor,
-        stack_encoding: torch.Tensor = None,
-        combat_encoding: torch.Tensor = None,
+        stack_encoding: Optional[torch.Tensor] = None,
+        combat_encoding: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Fuse all encodings into final representation."""
 
@@ -477,8 +491,6 @@ class StateFusionNetwork(nn.Module):
         # Stack encoding (if provided)
         if stack_encoding is not None:
             all_encodings.append(stack_encoding)
-        else:
-            all_encodings.append(torch.zeros(self.config.hidden_dim))
 
         # Ensure we have the expected number of encodings
         expected_count = 2 * 6 + 2 + 1 + 1  # zones + players + global + stack
@@ -495,7 +507,8 @@ class StateFusionNetwork(nn.Module):
         if self.layer_norm is not None:
             output = self.layer_norm(output)
 
-        return output
+        result: torch.Tensor = output
+        return result
 
 
 class EnhancedGameStateEncoder(nn.Module):
@@ -550,9 +563,10 @@ class EnhancedGameStateEncoder(nn.Module):
         global_encoding = self.global_encoder(game_state)
 
         # Fuse all components
-        return self.state_fusion(
+        result: torch.Tensor = self.state_fusion(
             zone_encodings, player_encodings, global_encoding
         )
+        return result
 
     def encode_batch(self, game_states: List[GameState]) -> torch.Tensor:
         """Encode multiple game states in batch."""

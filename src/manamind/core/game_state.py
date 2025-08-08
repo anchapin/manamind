@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Card(BaseModel):
@@ -65,6 +65,26 @@ class Card(BaseModel):
     # Internal encoding IDs (assigned during preprocessing)
     card_id: Optional[int] = None
     instance_id: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_card_type_compatibility(cls, values: Any) -> Any:
+        """Handle backward compatibility for card_type parameter."""
+        if isinstance(values, dict):
+            # Handle card_type -> card_types conversion
+            if "card_type" in values and "card_types" not in values:
+                card_type_str = values.pop("card_type")
+                if card_type_str:
+                    # Split on both space and em-dash for types like
+                    # "Creature — Bear"
+                    parts = card_type_str.replace(" — ", " ").split()
+                    values["card_types"] = parts
+
+            # Handle text -> oracle_text conversion
+            if "text" in values and "oracle_text" not in values:
+                values["oracle_text"] = values.pop("text")
+
+        return values
 
     @property
     def card_type(self) -> str:
@@ -329,7 +349,8 @@ class GameStateEncoder(nn.Module):
         self.player_encoder = nn.Linear(20, hidden_dim)  # life, mana, etc.
 
         # Global state encoder (turn, phase, priority, etc.)
-        self.global_encoder = nn.Linear(10, hidden_dim)
+        # 4 scalar features + 7 phase one-hot = 11 total features
+        self.global_encoder = nn.Linear(11, hidden_dim)
 
         # Final combination layer
         self.combiner = nn.Sequential(
@@ -367,7 +388,8 @@ class GameStateEncoder(nn.Module):
         lstm_out, (hidden, _) = self.zone_encoders[zone_idx](embedded_cards)
 
         # Use final hidden state as zone representation
-        return hidden.view(-1)  # Flatten
+        result: torch.Tensor = hidden.view(-1)  # Flatten
+        return result
 
     def encode_player(self, player: Player) -> torch.Tensor:
         """Encode player state (life, mana, etc.) into a tensor."""
@@ -388,7 +410,10 @@ class GameStateEncoder(nn.Module):
         while len(features) < 20:
             features.append(0.0)
 
-        return self.player_encoder(torch.tensor(features, dtype=torch.float32))
+        result: torch.Tensor = self.player_encoder(
+            torch.tensor(features, dtype=torch.float32)
+        )
+        return result
 
     def forward(self, game_state: GameState) -> torch.Tensor:
         """Encode a complete game state into a fixed-size tensor.
@@ -441,7 +466,8 @@ class GameStateEncoder(nn.Module):
 
         # Combine all encodings
         combined = torch.cat(encoded_parts, dim=0)
-        return self.combiner(combined.unsqueeze(0)).squeeze(0)
+        result: torch.Tensor = self.combiner(combined.unsqueeze(0)).squeeze(0)
+        return result
 
 
 # Factory functions for creating common game states

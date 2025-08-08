@@ -253,7 +253,7 @@ class MCTSAgent(Agent):
         return (
             random.choice(legal_actions)
             if legal_actions
-            else Action(ActionType.PASS, self.player_id)
+            else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
 
     def _set_prior_probabilities(self, node: MCTSNode) -> None:
