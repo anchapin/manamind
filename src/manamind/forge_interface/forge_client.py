@@ -28,8 +28,6 @@ except ImportError:
     JPYPE_AVAILABLE = False
     jpype = None
 
-from manamind.core.action import Action
-from manamind.core.game_state import GameState
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +201,9 @@ class ForgeClient:
             raise ForgeConnectionError("Py4J not available")
 
         try:
-            gateway_params = GatewayParameters(port=self.port, auto_convert=True)
+            gateway_params = GatewayParameters(
+                port=self.port, auto_convert=True
+            )
             self.gateway = JavaGateway(gateway_parameters=gateway_params)
 
             # Get the Forge API object
@@ -266,7 +266,9 @@ class ForgeClient:
                 self.forge_process.terminate()
                 self.forge_process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                logger.warning("Forge did not terminate gracefully, killing process")
+                logger.warning(
+                    "Forge did not terminate gracefully, killing process"
+                )
                 self.forge_process.kill()
                 self.forge_process.wait()
             except Exception as e:
@@ -279,7 +281,10 @@ class ForgeClient:
         logger.info("Forge stopped")
 
     def create_game(
-        self, deck1_path: str, deck2_path: str, game_format: str = "Constructed"
+        self,
+        deck1_path: str,
+        deck2_path: str,
+        game_format: str = "Constructed",
     ) -> str:
         """Create a new game in Forge.
 
@@ -298,7 +303,9 @@ class ForgeClient:
             raise ForgeConnectionError("Not connected to Forge")
 
         try:
-            game_id = self.forge_api.createGame(deck1_path, deck2_path, game_format)
+            game_id = self.forge_api.createGame(
+                deck1_path, deck2_path, game_format
+            )
             logger.info(f"Created game {game_id}")
             return game_id
 

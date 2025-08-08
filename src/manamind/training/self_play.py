@@ -15,7 +15,7 @@ import torch
 from tqdm import tqdm
 
 from manamind.core.action import Action
-from manamind.core.agent import Agent, MCTSAgent
+from manamind.core.agent import MCTSAgent
 from manamind.core.game_state import GameState, create_standard_game_start
 from manamind.forge_interface import ForgeClient, ForgeGameRunner
 from manamind.models.policy_value_network import PolicyValueNetwork
@@ -78,7 +78,9 @@ class SelfPlayGame:
         end = self.end_time or time.time()
         return end - self.start_time
 
-    def get_training_examples(self) -> List[Tuple[GameState, np.ndarray, float]]:
+    def get_training_examples(
+        self,
+    ) -> List[Tuple[GameState, np.ndarray, float]]:
         """Extract training examples from this game.
 
         Returns:
@@ -167,12 +169,16 @@ class SelfPlayTrainer:
         """
         num_iterations = num_iterations or self.config["training_iterations"]
 
-        logger.info(f"Starting self-play training for {num_iterations} iterations")
+        logger.info(
+            f"Starting self-play training for {num_iterations} iterations"
+        )
 
         for iteration in range(num_iterations):
             self.current_iteration = iteration
 
-            logger.info(f"=== Training Iteration {iteration + 1}/{num_iterations} ===")
+            logger.info(
+                f"=== Training Iteration {iteration + 1}/{num_iterations} ==="
+            )
 
             # Phase 1: Generate self-play games
             logger.info("Generating self-play games...")
@@ -200,7 +206,9 @@ class SelfPlayTrainer:
 
         logger.info("Training completed!")
 
-    def _generate_self_play_games(self) -> List[Tuple[GameState, np.ndarray, float]]:
+    def _generate_self_play_games(
+        self,
+    ) -> List[Tuple[GameState, np.ndarray, float]]:
         """Generate self-play games and extract training examples."""
         num_games = self.config["games_per_iteration"]
         all_examples = []
@@ -315,7 +323,9 @@ class SelfPlayTrainer:
 
                 # TODO: Get MCTS policy for training
                 # For now, use dummy policy
-                mcts_policy = np.ones(self.config.get("action_space_size", 1000)) / 1000
+                mcts_policy = (
+                    np.ones(self.config.get("action_space_size", 1000)) / 1000
+                )
 
                 # Record move
                 game.add_move(game_state.copy(), action, mcts_policy)
@@ -360,10 +370,12 @@ class SelfPlayTrainer:
         # 3. Updating the policy-value network
         # 4. Logging training metrics
 
-        logger.info(f"Training network on {len(self.training_examples)} examples")
+        logger.info(
+            f"Training network on {len(self.training_examples)} examples"
+        )
 
         # Placeholder for actual training implementation
-        batch_size = self.config["batch_size"]
+        self.config["batch_size"]
         epochs = self.config["epochs_per_iteration"]
 
         # Shuffle training examples
@@ -388,7 +400,8 @@ class SelfPlayTrainer:
         checkpoint_dir.mkdir(exist_ok=True)
 
         checkpoint_path = (
-            checkpoint_dir / f"checkpoint_iteration_{self.current_iteration}.pt"
+            checkpoint_dir
+            / f"checkpoint_iteration_{self.current_iteration}.pt"
         )
 
         checkpoint = {
@@ -419,7 +432,9 @@ class SelfPlayTrainer:
         self.network.load_state_dict(checkpoint["model_state_dict"])
         self.performance_history = checkpoint.get("performance_history", [])
 
-        logger.info(f"Loaded checkpoint from iteration {self.current_iteration}")
+        logger.info(
+            f"Loaded checkpoint from iteration {self.current_iteration}"
+        )
 
     def get_training_stats(self) -> Dict:
         """Get current training statistics."""

@@ -1,17 +1,14 @@
 """Tests for game state representation and encoding."""
 
-import numpy as np
 import pytest
 import torch
 
 from manamind.core.game_state import (
     Card,
-    GameState,
     GameStateEncoder,
     Player,
     Zone,
     create_empty_game_state,
-    create_standard_game_start,
 )
 
 
@@ -257,11 +254,17 @@ class TestGameStateIntegration:
         # Player 0 gets some cards
         cards = [
             Card(
-                name="Lightning Bolt", mana_cost="R", converted_mana_cost=1, card_id=1
+                name="Lightning Bolt",
+                mana_cost="R",
+                converted_mana_cost=1,
+                card_id=1,
             ),
             Card(name="Mountain", card_type="Land", card_id=2),
             Card(
-                name="Grizzly Bears", mana_cost="1G", converted_mana_cost=2, card_id=3
+                name="Grizzly Bears",
+                mana_cost="1G",
+                converted_mana_cost=2,
+                card_id=3,
             ),
         ]
 

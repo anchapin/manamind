@@ -200,7 +200,7 @@ class PolicyValueNetwork(nn.Module):
             List of (action, prior_prob, value) tuples
         """
         policy_logits, value = self.forward(game_state)
-        policy_probs = F.softmax(policy_logits, dim=-1)
+        F.softmax(policy_logits, dim=-1)
 
         # TODO: Map legal_actions to network output indices
         # This requires the ActionSpace to provide action->index mapping

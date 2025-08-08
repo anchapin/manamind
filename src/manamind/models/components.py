@@ -20,7 +20,10 @@ class ResidualBlock(nn.Module):
     """
 
     def __init__(
-        self, hidden_dim: int, dropout_rate: float = 0.1, activation: str = "relu"
+        self,
+        hidden_dim: int,
+        dropout_rate: float = 0.1,
+        activation: str = "relu",
     ):
         """Initialize the residual block.
 
@@ -110,12 +113,18 @@ class AttentionLayer(nn.Module):
         self.scale = 1.0 / math.sqrt(self.head_dim)
 
         # Linear projections for Q, K, V
-        self.query_projection = nn.Linear(hidden_dim, hidden_dim, bias=use_bias)
+        self.query_projection = nn.Linear(
+            hidden_dim, hidden_dim, bias=use_bias
+        )
         self.key_projection = nn.Linear(hidden_dim, hidden_dim, bias=use_bias)
-        self.value_projection = nn.Linear(hidden_dim, hidden_dim, bias=use_bias)
+        self.value_projection = nn.Linear(
+            hidden_dim, hidden_dim, bias=use_bias
+        )
 
         # Output projection
-        self.output_projection = nn.Linear(hidden_dim, hidden_dim, bias=use_bias)
+        self.output_projection = nn.Linear(
+            hidden_dim, hidden_dim, bias=use_bias
+        )
 
         # Dropout and layer norm
         self.attention_dropout = nn.Dropout(dropout_rate)
@@ -149,15 +158,17 @@ class AttentionLayer(nn.Module):
         queries = queries.view(
             batch_size, seq_len, self.num_heads, self.head_dim
         ).transpose(1, 2)
-        keys = keys.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(
-            1, 2
-        )
+        keys = keys.view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        ).transpose(1, 2)
         values = values.view(
             batch_size, seq_len, self.num_heads, self.head_dim
         ).transpose(1, 2)
 
         # Compute attention scores
-        attention_scores = torch.matmul(queries, keys.transpose(-2, -1)) * self.scale
+        attention_scores = (
+            torch.matmul(queries, keys.transpose(-2, -1)) * self.scale
+        )
 
         # Apply mask if provided
         if mask is not None:
@@ -195,7 +206,10 @@ class PositionalEncoding(nn.Module):
     """
 
     def __init__(
-        self, hidden_dim: int, max_seq_len: int = 5000, dropout_rate: float = 0.1
+        self,
+        hidden_dim: int,
+        max_seq_len: int = 5000,
+        dropout_rate: float = 0.1,
     ):
         """Initialize positional encoding.
 
@@ -213,7 +227,8 @@ class PositionalEncoding(nn.Module):
         position = torch.arange(0, max_seq_len, dtype=torch.float).unsqueeze(1)
 
         div_term = torch.exp(
-            torch.arange(0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim)
+            torch.arange(0, hidden_dim, 2).float()
+            * (-math.log(10000.0) / hidden_dim)
         )
 
         pe[:, 0::2] = torch.sin(position * div_term)
@@ -275,7 +290,9 @@ class CardEmbedding(nn.Module):
         self.type_embedding = nn.Embedding(num_card_types, embed_dim // 8)
 
         # Power/toughness embedding (for creatures)
-        self.power_embedding = nn.Embedding(max_power_toughness + 1, embed_dim // 16)
+        self.power_embedding = nn.Embedding(
+            max_power_toughness + 1, embed_dim // 16
+        )
         self.toughness_embedding = nn.Embedding(
             max_power_toughness + 1, embed_dim // 16
         )

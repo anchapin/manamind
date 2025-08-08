@@ -9,7 +9,9 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
-app = typer.Typer(name="manamind", help="ManaMind - AI agent for Magic: The Gathering")
+app = typer.Typer(
+    name="manamind", help="ManaMind - AI agent for Magic: The Gathering"
+)
 console = Console()
 
 
@@ -40,12 +42,16 @@ def train(
         50, "--games", "-g", help="Games per training iteration"
     ),
     checkpoint_dir: Path = typer.Option(
-        Path("checkpoints"), "--checkpoint-dir", help="Directory for checkpoints"
+        Path("checkpoints"),
+        "--checkpoint-dir",
+        help="Directory for checkpoints",
     ),
     resume_from: Optional[Path] = typer.Option(
         None, "--resume", help="Resume from checkpoint"
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose logging"
+    ),
 ):
     """Train the ManaMind agent using self-play."""
     setup_logging(verbose)
@@ -56,7 +62,9 @@ def train(
         import torch
 
         from manamind.forge_interface import ForgeClient
-        from manamind.models.policy_value_network import create_policy_value_network
+        from manamind.models.policy_value_network import (
+            create_policy_value_network,
+        )
         from manamind.training.self_play import SelfPlayTrainer
 
         # Create policy-value network
@@ -78,7 +86,9 @@ def train(
         }
 
         trainer = SelfPlayTrainer(
-            policy_value_network=network, forge_client=forge_client, config=config
+            policy_value_network=network,
+            forge_client=forge_client,
+            config=config,
         )
 
         # Resume from checkpoint if specified
@@ -89,7 +99,9 @@ def train(
         # Start training
         trainer.train()
 
-        console.print("[bold green]Training completed successfully![/bold green]")
+        console.print(
+            "[bold green]Training completed successfully![/bold green]"
+        )
 
     except Exception as e:
         console.print(f"[bold red]Training failed: {e}[/bold red]")
@@ -102,7 +114,10 @@ def train(
 def eval(
     model_path: Path = typer.Argument(..., help="Path to trained model"),
     opponent: str = typer.Option(
-        "forge", "--opponent", "-o", help="Opponent type (forge, random, human)"
+        "forge",
+        "--opponent",
+        "-o",
+        help="Opponent type (forge, random, human)",
     ),
     num_games: int = typer.Option(
         10, "--games", "-g", help="Number of evaluation games"
@@ -110,7 +125,9 @@ def eval(
     forge_path: Optional[Path] = typer.Option(
         None, "--forge-path", help="Path to Forge installation"
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose logging"
+    ),
 ):
     """Evaluate a trained ManaMind model."""
     setup_logging(verbose)
@@ -127,10 +144,14 @@ def eval(
         checkpoint = torch.load(model_path, map_location=device)
 
         # Create evaluator
-        evaluator = ModelEvaluator(model_checkpoint=checkpoint, forge_path=forge_path)
+        evaluator = ModelEvaluator(
+            model_checkpoint=checkpoint, forge_path=forge_path
+        )
 
         # Run evaluation
-        results = evaluator.evaluate(opponent_type=opponent, num_games=num_games)
+        results = evaluator.evaluate(
+            opponent_type=opponent, num_games=num_games
+        )
 
         # Print results
         console.print("[bold green]Evaluation Results:[/bold green]")
@@ -152,7 +173,9 @@ def forge_test(
     forge_path: Optional[Path] = typer.Option(
         None, "--forge-path", help="Path to Forge installation"
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose logging"
+    ),
 ):
     """Test connection to Forge game engine."""
     setup_logging(verbose)
@@ -170,10 +193,12 @@ def forge_test(
             console.print(f"[green]✓[/green] Created test game: {game_id}")
 
             # Get initial game state
-            state = client.get_game_state(game_id)
-            console.print(f"[green]✓[/green] Retrieved game state")
+            client.get_game_state(game_id)
+            console.print("[green]✓[/green] Retrieved game state")
 
-            console.print("[bold green]Forge connection test successful![/bold green]")
+            console.print(
+                "[bold green]Forge connection test successful![/bold green]"
+            )
 
     except Exception as e:
         console.print(f"[bold red]Forge connection failed: {e}[/bold red]")
@@ -185,11 +210,18 @@ def forge_test(
 @app.command()
 def play(
     model_path: Path = typer.Argument(..., help="Path to trained model"),
-    deck_path: Optional[Path] = typer.Option(None, "--deck", help="Path to deck file"),
-    opponent: str = typer.Option(
-        "human", "--opponent", "-o", help="Opponent type (human, forge, random)"
+    deck_path: Optional[Path] = typer.Option(
+        None, "--deck", help="Path to deck file"
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+    opponent: str = typer.Option(
+        "human",
+        "--opponent",
+        "-o",
+        help="Opponent type (human, forge, random)",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose logging"
+    ),
 ):
     """Play a game against the ManaMind agent."""
     setup_logging(verbose)

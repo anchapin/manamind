@@ -7,12 +7,9 @@ into neural network inputs.
 from __future__ import annotations
 
 import copy
-import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, Field
@@ -25,9 +22,13 @@ class Card(BaseModel):
     name: str
     mana_cost: str = ""
     converted_mana_cost: int = 0
-    card_types: List[str] = Field(default_factory=list)  # ["Creature", "Artifact"]
+    card_types: List[str] = Field(
+        default_factory=list
+    )  # ["Creature", "Artifact"]
     subtypes: List[str] = Field(default_factory=list)  # ["Human", "Soldier"]
-    supertypes: List[str] = Field(default_factory=list)  # ["Legendary", "Basic"]
+    supertypes: List[str] = Field(
+        default_factory=list
+    )  # ["Legendary", "Basic"]
 
     # Creature/Planeswalker stats
     power: Optional[int] = None
@@ -93,7 +94,9 @@ class Card(BaseModel):
         if self.power is None:
             return None
         return (
-            self.power + self.counters.get("+1/+1", 0) - self.counters.get("-1/-1", 0)
+            self.power
+            + self.counters.get("+1/+1", 0)
+            - self.counters.get("-1/-1", 0)
         )
 
     def current_toughness(self) -> Optional[int]:
@@ -230,7 +233,13 @@ class GameState:
             tuple(
                 len(getattr(p, zone).cards)
                 for p in self.players
-                for zone in ["hand", "battlefield", "graveyard", "library", "exile"]
+                for zone in [
+                    "hand",
+                    "battlefield",
+                    "graveyard",
+                    "library",
+                    "exile",
+                ]
             ),
             len(self.stack),
         ]
@@ -287,7 +296,7 @@ class GameStateEncoder(nn.Module):
         vocab_size: int = 50000,  # Number of unique cards/tokens
         embed_dim: int = 512,
         hidden_dim: int = 1024,
-        num_zones: int = 6,  # hand, battlefield, graveyard, library, exile, command
+        num_zones: int = 6,  # hand, battlefield, graveyard, library, exile
         max_cards_per_zone: int = 200,
         output_dim: int = 2048,
     ):
@@ -307,7 +316,10 @@ class GameStateEncoder(nn.Module):
         self.zone_encoders = nn.ModuleList(
             [
                 nn.LSTM(
-                    embed_dim, hidden_dim // 2, batch_first=True, bidirectional=True
+                    embed_dim,
+                    hidden_dim // 2,
+                    batch_first=True,
+                    bidirectional=True,
                 )
                 for _ in range(num_zones)
             ]
@@ -444,5 +456,5 @@ def create_empty_game_state() -> GameState:
 
 def create_standard_game_start() -> GameState:
     """Create a game state representing the start of a standard game."""
-    # TODO: Implement proper game start with shuffled libraries, opening hands, etc.
+    # TODO: Implement proper game start with shuffled libraries, hands, etc.
     return create_empty_game_state()

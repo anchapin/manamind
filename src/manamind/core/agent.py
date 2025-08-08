@@ -1,6 +1,6 @@
 """Base agent interface and Monte Carlo Tree Search implementation.
 
-This module defines the core agent interface and implements MCTS for decision making.
+This module defines the core agent interface and implements MCTS for decisions.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 
 from manamind.core.action import Action, ActionSpace
@@ -131,7 +130,9 @@ class MCTSNode:
 
     def select_child(self) -> MCTSNode:
         """Select the child with the highest UCB1 score."""
-        return max(self.children.values(), key=lambda child: child.ucb1_score())
+        return max(
+            self.children.values(), key=lambda child: child.ucb1_score()
+        )
 
     def expand(self) -> MCTSNode:
         """Expand the tree by adding a new child node."""
@@ -237,7 +238,9 @@ class MCTSAgent(Agent):
             legal_actions = self.action_space.get_legal_actions(game_state)
             return random.choice(legal_actions)
 
-        best_child = max(root.children.values(), key=lambda child: child.visits)
+        best_child = max(
+            root.children.values(), key=lambda child: child.visits
+        )
         return best_child.action
 
     def _set_prior_probabilities(self, node: MCTSNode) -> None:
@@ -249,7 +252,6 @@ class MCTSAgent(Agent):
         # For now, set uniform priors
         num_actions = len(node.untried_actions)
         if num_actions > 0:
-            prior = 1.0 / num_actions
             for action in node.untried_actions:
                 # This would be set from policy network output
                 pass
@@ -363,7 +365,7 @@ class NeuralAgent(Agent):
 
         # Apply softmax with temperature
         if self.temperature > 0:
-            probs = torch.softmax(policy_logits / self.temperature, dim=-1)
+            torch.softmax(policy_logits / self.temperature, dim=-1)
             # TODO: Map probabilities to legal actions and sample
 
         # For now, return random action

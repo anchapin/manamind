@@ -6,11 +6,10 @@ and optimized representations.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from manamind.core.game_state import Card, GameState, Player, Zone
 
@@ -60,7 +59,9 @@ class CardEmbeddingSystem(nn.Module):
         self.loyalty_embedding = nn.Linear(1, embed_dim // 16)
 
         # State encoding
-        self.state_encoder = nn.Linear(10, embed_dim // 8)  # Tapped, counters, etc.
+        self.state_encoder = nn.Linear(
+            10, embed_dim // 8
+        )  # Tapped, counters, etc.
 
         # Final projection
         self.projector = nn.Linear(embed_dim, embed_dim)
@@ -76,7 +77,9 @@ class CardEmbeddingSystem(nn.Module):
         features.append(card_emb)
 
         # Card type embedding (simplified)
-        type_id = hash(" ".join(card.card_types)) % 100 if card.card_types else 0
+        type_id = (
+            hash(" ".join(card.card_types)) % 100 if card.card_types else 0
+        )
         type_emb = self.type_embedding(torch.tensor(type_id, dtype=torch.long))
         features.append(type_emb)
 
@@ -94,7 +97,10 @@ class CardEmbeddingSystem(nn.Module):
         else:
             features.append(torch.zeros(self.embed_dim // 16))
 
-        if hasattr(card, "current_toughness") and card.current_toughness() is not None:
+        if (
+            hasattr(card, "current_toughness")
+            and card.current_toughness() is not None
+        ):
             toughness_emb = self.toughness_embedding(
                 torch.tensor([float(card.current_toughness())])
             )
@@ -103,7 +109,9 @@ class CardEmbeddingSystem(nn.Module):
             features.append(torch.zeros(self.embed_dim // 16))
 
         if hasattr(card, "loyalty") and card.loyalty is not None:
-            loyalty_emb = self.loyalty_embedding(torch.tensor([float(card.loyalty)]))
+            loyalty_emb = self.loyalty_embedding(
+                torch.tensor([float(card.loyalty)])
+            )
             features.append(loyalty_emb)
         else:
             features.append(torch.zeros(self.embed_dim // 16))
@@ -179,7 +187,9 @@ class HandEncoder(ZoneEncoder):
 
     def __init__(self, config: EncoderConfig):
         super().__init__(config, "hand")
-        self.attention = nn.MultiheadAttention(config.embed_dim, config.num_heads)
+        self.attention = nn.MultiheadAttention(
+            config.embed_dim, config.num_heads
+        )
         self.output_proj = nn.Linear(config.embed_dim, config.hidden_dim)
 
     def _aggregate_embeddings(
@@ -223,7 +233,9 @@ class BattlefieldEncoder(ZoneEncoder):
 
         # Add positional encoding for battlefield position
         seq_len = embeddings.shape[0]
-        pos_encoding = torch.arange(seq_len, dtype=torch.float).unsqueeze(1) / 100.0
+        pos_encoding = (
+            torch.arange(seq_len, dtype=torch.float).unsqueeze(1) / 100.0
+        )
         pos_encoding = pos_encoding.expand(-1, embeddings.shape[1])
         embeddings = embeddings + pos_encoding
 
@@ -296,7 +308,10 @@ class PlayerStateEncoder(nn.Module):
         # Mana pool encoding
         mana_colors = ["W", "U", "B", "R", "G", "C"]
         mana_features = torch.tensor(
-            [float(player.mana_pool.get(color, 0)) / 10.0 for color in mana_colors]
+            [
+                float(player.mana_pool.get(color, 0)) / 10.0
+                for color in mana_colors
+            ]
         )
         mana_emb = self.mana_encoder(mana_features)
 
@@ -348,8 +363,12 @@ class GlobalStateEncoder(nn.Module):
         """Encode global game state."""
         # Phase encoding
         phases = ["untap", "upkeep", "draw", "main", "combat", "main2", "end"]
-        phase_id = phases.index(game_state.phase) if game_state.phase in phases else 0
-        phase_emb = self.phase_embedding(torch.tensor(phase_id, dtype=torch.long))
+        phase_id = (
+            phases.index(game_state.phase) if game_state.phase in phases else 0
+        )
+        phase_emb = self.phase_embedding(
+            torch.tensor(phase_id, dtype=torch.long)
+        )
 
         # Turn and priority features
         turn_features = torch.tensor(
@@ -357,7 +376,11 @@ class GlobalStateEncoder(nn.Module):
                 float(game_state.turn_number) / 20.0,
                 float(game_state.active_player),
                 float(game_state.priority_player),
-                1.0 if game_state.active_player == game_state.priority_player else 0.0,
+                (
+                    1.0
+                    if game_state.active_player == game_state.priority_player
+                    else 0.0
+                ),
             ]
         )
         turn_emb = self.turn_encoder(turn_features)
@@ -527,7 +550,9 @@ class EnhancedGameStateEncoder(nn.Module):
         global_encoding = self.global_encoder(game_state)
 
         # Fuse all components
-        return self.state_fusion(zone_encodings, player_encodings, global_encoding)
+        return self.state_fusion(
+            zone_encodings, player_encodings, global_encoding
+        )
 
     def encode_batch(self, game_states: List[GameState]) -> torch.Tensor:
         """Encode multiple game states in batch."""

@@ -1,22 +1,18 @@
 """Action representation and validation for Magic: The Gathering.
 
 This module defines how actions (moves) in MTG are represented and validated.
-Actions include playing lands, casting spells, activating abilities, attacking, etc.
+Actions include playing lands, casting spells, activating abilities, etc.
 """
 
 from __future__ import annotations
 
-import copy
-import itertools
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 import torch
-from pydantic import BaseModel, Field
 
 from manamind.core.game_state import Card, GameState
 
@@ -167,7 +163,9 @@ class Action:
         if executor:
             return executor.execute(self, game_state)
 
-        raise NotImplementedError(f"Execution not implemented for {self.action_type}")
+        raise NotImplementedError(
+            f"Execution not implemented for {self.action_type}"
+        )
 
 
 class ActionValidator(ABC):
@@ -313,7 +311,6 @@ class CastSpellExecutor(ActionExecutor):
         player = new_state.players[action.player_id]
 
         # Pay mana cost (simplified)
-        total_cost = action.card.converted_mana_cost
         # TODO: Proper mana payment logic
 
         # Move card from hand to stack
@@ -368,7 +365,7 @@ class ActionSpace:
         """Initialize the action space.
 
         Args:
-            max_actions: Maximum number of actions to consider (for neural network sizing)
+            max_actions: Maximum number of actions to consider (for NN sizing)
         """
         self.max_actions = max_actions
         self.action_to_id: Dict[str, int] = {}
@@ -376,7 +373,7 @@ class ActionSpace:
         self._build_action_mappings()
 
     def _build_action_mappings(self) -> None:
-        """Build mappings between actions and integer IDs for neural networks."""
+        """Build mappings between actions and integer IDs for networks."""
         # TODO: Build comprehensive action vocabulary
         # This is a critical component for the neural network
         action_id = 0
@@ -405,7 +402,10 @@ class ActionSpace:
 
         # Can always pass priority
         legal_actions.append(
-            Action(action_type=ActionType.PASS_PRIORITY, player_id=current_player_id)
+            Action(
+                action_type=ActionType.PASS_PRIORITY,
+                player_id=current_player_id,
+            )
         )
 
         # Check for land plays

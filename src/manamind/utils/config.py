@@ -169,7 +169,7 @@ class Config(BaseModel):
                         value = int(value)
                     elif "." in value and value.replace(".", "").isdigit():
                         value = float(value)
-                except:
+                except ValueError:
                     pass  # Keep as string
 
                 # Set nested dictionary value

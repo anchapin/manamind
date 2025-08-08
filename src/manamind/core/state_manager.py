@@ -1,21 +1,20 @@
 """Optimized state management for efficient MCTS and training.
 
 This module provides memory-efficient game state management with copy-on-write
-semantics, incremental updates, and state caching for high-performance training.
+semantics, incremental updates, and caching for high-performance training.
 """
 
 import copy
 import threading
 import weakref
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import torch
 
-from manamind.core.action import Action, ActionType
-from manamind.core.game_state import Card, GameState, Player, Zone
+from manamind.core.action import Action
+from manamind.core.game_state import GameState
 
 
 @dataclass
@@ -61,7 +60,9 @@ class StateDelta:
 
     # Changed components
     player_changes: Dict[int, Dict[str, Any]] = field(default_factory=dict)
-    zone_changes: Dict[Tuple[int, str], Dict[str, Any]] = field(default_factory=dict)
+    zone_changes: Dict[Tuple[int, str], Dict[str, Any]] = field(
+        default_factory=dict
+    )
     global_changes: Dict[str, Any] = field(default_factory=dict)
 
     # For efficient rollback
@@ -122,11 +123,20 @@ class CopyOnWriteGameState:
             phase=self._data.phase,
             active_player=self._data.active_player,
             priority_player=self._data.priority_player,
-            player_lives=(self._data.players[0].life, self._data.players[1].life),
+            player_lives=(
+                self._data.players[0].life,
+                self._data.players[1].life,
+            ),
             zone_sizes=tuple(
                 len(getattr(player, zone).cards)
                 for player in self._data.players
-                for zone in ["hand", "battlefield", "graveyard", "library", "exile"]
+                for zone in [
+                    "hand",
+                    "battlefield",
+                    "graveyard",
+                    "library",
+                    "exile",
+                ]
             ),
             stack_size=len(self._data.stack),
         )
@@ -139,7 +149,9 @@ class IncrementalStateManager:
         self.base_state = base_state
         self.delta_stack: List[StateDelta] = []
         self._current_state: Optional[GameState] = None
-        self._state_cache: Dict[int, GameState] = {}  # Cache states at different depths
+        self._state_cache: Dict[int, GameState] = (
+            {}
+        )  # Cache states at different depths
         self._max_cache_size = 100
 
     def push_action(self, action: Action) -> GameState:
@@ -216,7 +228,10 @@ class IncrementalStateManager:
             if old_player.life != new_player.life:
                 changes["life"] = (old_player.life, new_player.life)
             if old_player.mana_pool != new_player.mana_pool:
-                changes["mana_pool"] = (old_player.mana_pool, new_player.mana_pool)
+                changes["mana_pool"] = (
+                    old_player.mana_pool,
+                    new_player.mana_pool,
+                )
             if changes:
                 delta.player_changes[i] = changes
 
@@ -231,7 +246,8 @@ class IncrementalStateManager:
 
                 if len(old_zone.cards) != len(new_zone.cards):
                     delta.zone_changes[(i, zone_name)] = {
-                        "size_change": len(new_zone.cards) - len(old_zone.cards)
+                        "size_change": len(new_zone.cards)
+                        - len(old_zone.cards)
                     }
 
         # Global changes
@@ -313,7 +329,13 @@ class StatePool:
             player.lands_played_this_turn = 0
 
             # Clear zones
-            for zone_name in ["hand", "battlefield", "graveyard", "library", "exile"]:
+            for zone_name in [
+                "hand",
+                "battlefield",
+                "graveyard",
+                "library",
+                "exile",
+            ]:
                 zone = getattr(player, zone_name)
                 zone.cards.clear()
 
@@ -371,7 +393,9 @@ class BatchStateProcessor:
     ) -> List[List[Action]]:
         """Generate legal actions for multiple states in parallel."""
         if action_space is None:
-            raise ValueError("ActionSpace required for legal action generation")
+            raise ValueError(
+                "ActionSpace required for legal action generation"
+            )
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
@@ -380,18 +404,23 @@ class BatchStateProcessor:
             ]
             return [future.result() for future in futures]
 
-    def _batch_evaluate(self, states: List[GameState], evaluator=None) -> List[float]:
+    def _batch_evaluate(
+        self, states: List[GameState], evaluator=None
+    ) -> List[float]:
         """Evaluate multiple states in parallel."""
         if evaluator is None:
             raise ValueError("Evaluator required for batch evaluation")
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
-                executor.submit(evaluator.evaluate_state, state) for state in states
+                executor.submit(evaluator.evaluate_state, state)
+                for state in states
             ]
             return [future.result() for future in futures]
 
-    def _create_batches(self, states: List[GameState]) -> List[List[GameState]]:
+    def _create_batches(
+        self, states: List[GameState]
+    ) -> List[List[GameState]]:
         """Group states into batches for processing."""
         batches = []
         for i in range(0, len(states), self.batch_size):
@@ -447,7 +476,9 @@ class TranspositionTable:
         """Get value estimate for state."""
         return self.get(state_hash, "value_estimate")
 
-    def get_action_values(self, state_hash: StateHash) -> Optional[Dict[str, float]]:
+    def get_action_values(
+        self, state_hash: StateHash
+    ) -> Optional[Dict[str, float]]:
         """Get action value estimates for state."""
         return self.get(state_hash, "action_values")
 
@@ -505,7 +536,13 @@ class StateCompressionManager:
             zone_sizes=tuple(
                 len(getattr(player, zone).cards)
                 for player in state.players
-                for zone in ["hand", "battlefield", "graveyard", "library", "exile"]
+                for zone in [
+                    "hand",
+                    "battlefield",
+                    "graveyard",
+                    "library",
+                    "exile",
+                ]
             ),
             stack_size=len(state.stack),
         )
