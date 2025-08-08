@@ -93,7 +93,7 @@ class MCTSNode:
         self.game_state = game_state
         self.action = action
         self.parent = parent
-        self.children: Dict[Action, MCTSNode] = {}
+        self.children: List[Tuple[Action, MCTSNode]] = []
 
         # MCTS statistics
         self.visits = 0
@@ -112,22 +112,23 @@ class MCTSNode:
         """Check if this is a terminal game state."""
         return self.game_state.is_game_over()
 
-    def ucb1_score(self, c: float = 1.414) -> float:
+    def ucb1_score(self, child_node: MCTSNode, c: float = 1.414) -> float:
         """Calculate UCB1 score for action selection.
 
         Args:
+            child_node: Child node to calculate score for
             c: Exploration parameter
 
         Returns:
             UCB1 score
         """
-        if self.visits == 0:
+        if child_node.visits == 0:
             return float("inf")
 
-        exploitation = self.total_value / self.visits
+        exploitation = child_node.total_value / child_node.visits
         exploration = (
-            c * math.sqrt(math.log(self.parent.visits) / self.visits)
-            if self.parent
+            c * math.sqrt(math.log(self.visits) / child_node.visits)
+            if self.visits > 0
             else 0.0
         )
         return exploitation + exploration
@@ -135,7 +136,8 @@ class MCTSNode:
     def select_child(self) -> MCTSNode:
         """Select the child with the highest UCB1 score."""
         return max(
-            self.children.values(), key=lambda child: child.ucb1_score()
+            (child for _, child in self.children),
+            key=lambda child: self.ucb1_score(child)
         )
 
     def expand(self) -> MCTSNode:
@@ -146,7 +148,7 @@ class MCTSNode:
         action = self.untried_actions.pop()
         new_state = action.execute(self.game_state)
         child_node = MCTSNode(new_state, action, self)
-        self.children[action] = child_node
+        self.children.append((action, child_node))
         return child_node
 
     def backup(self, value: float) -> None:
@@ -243,7 +245,7 @@ class MCTSAgent(Agent):
             return random.choice(legal_actions)
 
         best_child = max(
-            root.children.values(), key=lambda child: child.visits
+            (child for _, child in root.children), key=lambda child: child.visits
         )
         if best_child.action:
             return best_child.action

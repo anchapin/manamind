@@ -167,6 +167,75 @@ class Action:
             f"Execution not implemented for {self.action_type}"
         )
 
+    # Neural network representation
+    action_id: Optional[int] = None
+    action_vector: Optional[torch.Tensor] = None
+
+    def get_complexity_score(self) -> int:
+        """Calculate action complexity for MCTS guidance."""
+        score = 1  # Base complexity
+
+        if self.target_cards:
+            score += len(self.target_cards)
+        if self.modes_chosen:
+            score += len(self.modes_chosen) * 2
+        if self.x_value:
+            score += 3
+        if self.blockers:
+            score += sum(len(blockers) for blockers in self.blockers.values())
+
+        return score
+
+    def get_all_targets(self) -> List[Any]:
+        """Get all targets referenced by this action."""
+        targets: List[Any] = []
+        if self.card:
+            targets.append(self.card)
+        if self.target:
+            targets.append(self.target)
+        targets.extend(self.target_cards)
+        targets.extend(self.target_players)
+        targets.extend(self.target_permanents)
+        return targets
+
+    def is_valid(self, game_state: GameState) -> bool:
+        """Check if this action is legal in the given game state.
+
+        Args:
+            game_state: Current game state
+
+        Returns:
+            True if the action is legal, False otherwise
+        """
+        # Delegate to specific validators based on action type
+        validator = ACTION_VALIDATORS.get(self.action_type)
+        if validator:
+            return validator.validate(self, game_state)
+        return False
+
+    def execute(self, game_state: GameState) -> GameState:
+        """Execute this action and return the resulting game state.
+
+        Args:
+            game_state: Current game state
+
+        Returns:
+            New game state after executing this action
+
+        Raises:
+            ValueError: If the action is not valid
+        """
+        if not self.is_valid(game_state):
+            raise ValueError(f"Invalid action: {self}")
+
+        executor = ACTION_EXECUTORS.get(self.action_type)
+        if executor:
+            return executor.execute(self, game_state)
+
+        raise NotImplementedError(
+            f"Execution not implemented for {self.action_type}"
+        )
+
 
 class ActionValidator(ABC):
     """Base class for validating specific types of actions."""
