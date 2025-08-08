@@ -29,7 +29,7 @@ class StateHash:
     zone_sizes: Tuple[int, ...]  # Sizes of all zones
     stack_size: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._hash = hash(
             (
                 self.turn_number,
@@ -90,7 +90,7 @@ class CopyOnWriteGameState:
             self._is_cow = True
             self._parent = weakref.ref(base_state)
 
-    def _ensure_writable(self):
+    def _ensure_writable(self) -> None:
         """Ensure this state is writable (copy-on-write)."""
         if self._is_cow:
             # Make a deep copy

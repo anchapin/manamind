@@ -17,9 +17,9 @@ from tqdm import tqdm
 from manamind.core.action import Action
 from manamind.core.agent import MCTSAgent
 from manamind.core.game_state import GameState, create_standard_game_start
-from manamind.forge_interface import ForgeClient, ForgeGameRunner
+from manamind.forge_interface import ForgeClient  # ForgeGameRunner not implemented yet
 from manamind.models.policy_value_network import PolicyValueNetwork
-from manamind.training.data_manager import TrainingDataManager
+# from manamind.training.data_manager import TrainingDataManager
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class SelfPlayTrainer:
         self,
         policy_value_network: PolicyValueNetwork,
         forge_client: Optional[ForgeClient] = None,
-        data_manager: Optional[TrainingDataManager] = None,
+        data_manager: Optional[Any] = None,  # TrainingDataManager not implemented yet
         config: Optional[Dict] = None,
     ):
         """Initialize self-play trainer.
@@ -119,7 +119,8 @@ class SelfPlayTrainer:
         """
         self.network = policy_value_network
         self.forge_client = forge_client
-        self.data_manager = data_manager or TrainingDataManager()
+        # self.data_manager = data_manager or TrainingDataManager()
+        self.data_manager = data_manager  # Placeholder until implemented
 
         # Training configuration
         self.config = config or self._default_config()

@@ -154,7 +154,7 @@ class Config(BaseModel):
         Args:
             prefix: Environment variable prefix
         """
-        env_updates = {}
+        env_updates: Dict[str, Any] = {}
 
         for key, value in os.environ.items():
             if key.startswith(prefix):
@@ -162,13 +162,14 @@ class Config(BaseModel):
                 config_key = key[len(prefix) :].lower().replace("_", ".")
 
                 # Try to convert to appropriate type
+                converted_value: Any = value
                 try:
                     if value.lower() in ("true", "false"):
-                        value = value.lower() == "true"
+                        converted_value = value.lower() == "true"
                     elif value.isdigit():
-                        value = int(value)
+                        converted_value = int(value)
                     elif "." in value and value.replace(".", "").isdigit():
-                        value = float(value)
+                        converted_value = float(value)
                 except ValueError:
                     pass  # Keep as string
 
@@ -177,7 +178,7 @@ class Config(BaseModel):
                 d = env_updates
                 for k in keys[:-1]:
                     d = d.setdefault(k, {})
-                d[keys[-1]] = value
+                d[keys[-1]] = converted_value
 
         if env_updates:
             self.update(env_updates)

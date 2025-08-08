@@ -137,29 +137,30 @@ def eval(
     try:
         import torch
 
-        from manamind.evaluation.evaluator import ModelEvaluator
+        # from manamind.evaluation.evaluator import ModelEvaluator
 
         # Load model
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         checkpoint = torch.load(model_path, map_location=device)
 
         # Create evaluator
-        evaluator = ModelEvaluator(
-            model_checkpoint=checkpoint, forge_path=forge_path
-        )
+        # evaluator = ModelEvaluator(
+        #     model_checkpoint=checkpoint, forge_path=forge_path
+        # )
 
         # Run evaluation
-        results = evaluator.evaluate(
-            opponent_type=opponent, num_games=num_games
-        )
+        # results = evaluator.evaluate(
+        #     opponent_type=opponent, num_games=num_games
+        # )
 
         # Print results
-        console.print("[bold green]Evaluation Results:[/bold green]")
-        console.print(f"Win Rate: {results['win_rate']:.1%}")
-        console.print(f"Games Played: {results['total_games']}")
-        console.print(f"Wins: {results['wins']}")
-        console.print(f"Losses: {results['losses']}")
-        console.print(f"Draws: {results['draws']}")
+        console.print("[bold red]Evaluation not yet implemented[/bold red]")
+        # console.print("[bold green]Evaluation Results:[/bold green]")
+        # console.print(f"Win Rate: {results['win_rate']:.1%}")
+        # console.print(f"Games Played: {results['total_games']}")
+        # console.print(f"Wins: {results['wins']}")
+        # console.print(f"Losses: {results['losses']}")
+        # console.print(f"Draws: {results['draws']}")
 
     except Exception as e:
         console.print(f"[bold red]Evaluation failed: {e}[/bold red]")
