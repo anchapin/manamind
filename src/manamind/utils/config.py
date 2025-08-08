@@ -159,7 +159,7 @@ class Config(BaseModel):
         for key, value in os.environ.items():
             if key.startswith(prefix):
                 # Convert MANAMIND_TRAINING_MCTS_SIMULATIONS -> training.mcts
-                config_key = key[len(prefix):].lower().replace("_", ".")
+                config_key = key[len(prefix) :].lower().replace("_", ".")
 
                 # Try to convert to appropriate type
                 try:
