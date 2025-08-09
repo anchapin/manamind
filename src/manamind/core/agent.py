@@ -9,7 +9,7 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 
@@ -137,7 +137,7 @@ class MCTSNode:
         """Select the child with the highest UCB1 score."""
         return max(
             (child for _, child in self.children),
-            key=lambda child: self.ucb1_score(child)
+            key=lambda child: self.ucb1_score(child),
         )
 
     def expand(self) -> MCTSNode:
@@ -245,7 +245,8 @@ class MCTSAgent(Agent):
             return random.choice(legal_actions)
 
         best_child = max(
-            (child for _, child in root.children), key=lambda child: child.visits
+            (child for _, child in root.children),
+            key=lambda child: child.visits,
         )
         if best_child.action:
             return best_child.action
