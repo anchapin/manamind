@@ -56,7 +56,7 @@ manamind/
 
 1. **Clone and setup environment:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/anchapin/manamind
    cd manamind
    ./scripts/setup.sh
    ```
