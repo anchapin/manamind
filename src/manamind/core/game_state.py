@@ -214,6 +214,11 @@ class GameState:
     # Game history for neural network context
     history: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Pending game state information for complex actions
+    pending_targets: Optional[Dict[str, Any]] = None
+    pending_modes: Optional[List[str]] = None
+    pending_x_value: Optional[int] = None
+
     @property
     def current_player(self) -> Player:
         """Get the player whose turn it is."""

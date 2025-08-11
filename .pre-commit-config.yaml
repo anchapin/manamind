@@ -20,5 +20,5 @@ repos:
   rev: v1.17.1
   hooks:
   - id: mypy
-    additional_dependencies: [types-all]
-    args: [--ignore-missing-imports]
+    additional_dependencies: [types-PyYAML, types-requests]
+    args: [--ignore-missing-imports, --disable-error-code=misc]

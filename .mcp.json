@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mtg-server": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-mtg"],
+      "env": {}
+    },
+    "scryfall": {
+      "command": "cmd", 
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-scryfall"],
+      "env": {}
+    }
+  }
+}
