@@ -1131,10 +1131,10 @@ class ChooseModeValidator(ActionValidator):
     ) -> bool:
         """Validate that mode selection meets constraints."""
         mode_count = len(chosen_modes)
-        min_modes = constraints.get("min_modes", 1)
-        max_modes = constraints.get("max_modes", 1)
+        min_modes: int = constraints.get("min_modes", 1)
+        max_modes: int = constraints.get("max_modes", 1)
 
-        return min_modes <= mode_count <= max_modes
+        return bool(min_modes <= mode_count <= max_modes)
 
 
 class ChooseXValueValidator(ActionValidator):
@@ -1214,7 +1214,7 @@ class ChooseXValueValidator(ActionValidator):
         """Check if player can pay the required mana cost."""
         total_required = sum(required_mana.values())
         available_mana = player.total_mana()
-        return available_mana >= total_required
+        return bool(available_mana >= total_required)
 
 
 class TapForManaValidator(ActionValidator):
@@ -2321,7 +2321,10 @@ class ChooseTargetExecutor(ActionExecutor):
         new_state = game_state.copy()
 
         # Store target selections in game state or pending spell
-        if hasattr(new_state, "pending_targets"):
+        if (
+            hasattr(new_state, "pending_targets")
+            and new_state.pending_targets is not None
+        ):
             new_state.pending_targets.update(
                 {
                     "cards": action.target_cards,
@@ -2408,7 +2411,11 @@ class ChooseXValueExecutor(ActionExecutor):
             new_state.pending_x_value = action.x_value
 
         # Update mana cost of the spell if it's being cast
-        if action.card and hasattr(new_state, "pending_spell_cost"):
+        if (
+            action.card
+            and hasattr(new_state, "pending_spell_cost")
+            and action.x_value is not None
+        ):
             total_cost = self._calculate_total_cost(
                 action.card, action.x_value
             )
