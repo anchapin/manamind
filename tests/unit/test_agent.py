@@ -2,14 +2,29 @@
 
 import math
 
+import pytest
+
 from manamind.core.action import Action
 from manamind.core.agent import (
+    Agent,
     MCTSAgent,
     MCTSNode,
     NeuralAgent,
     RandomAgent,
 )
-from manamind.core.game_state import create_empty_game_state
+from manamind.core.game_state import Card, create_empty_game_state
+
+
+def _main_phase_state_with_land():
+    """Player 0 in their main phase with priority and a Mountain in hand."""
+    game_state = create_empty_game_state()
+    game_state.players[0].hand.add_card(
+        Card(name="Mountain", card_types=["Land"])
+    )
+    game_state.active_player = 0
+    game_state.priority_player = 0
+    game_state.phase = "main"
+    return game_state
 
 
 class TestAgent:
@@ -19,6 +34,11 @@ class TestAgent:
         """Test agent creation with player ID."""
         agent = RandomAgent(player_id=0)
         assert agent.player_id == 0
+
+    def test_abstract_base_cannot_be_instantiated(self):
+        """The Agent base class leaves select_action abstract."""
+        with pytest.raises(TypeError):
+            Agent(0)  # type: ignore[abstract]
 
 
 class TestRandomAgent:
@@ -55,6 +75,18 @@ class TestRandomAgent:
         agent = RandomAgent(player_id=0)
         game_history = []
         agent.update_from_game(game_history)  # Should not raise
+
+    def test_random_agent_deterministic_with_seed(self):
+        """Two random agents with the same seed pick the same action."""
+        game_state = _main_phase_state_with_land()
+
+        agent1 = RandomAgent(player_id=0, seed=123)
+        agent2 = RandomAgent(player_id=0, seed=123)
+
+        action1 = agent1.select_action(game_state)
+        action2 = agent2.select_action(game_state)
+
+        assert action1.action_type == action2.action_type
 
 
 class TestMCTSNode:
@@ -162,6 +194,20 @@ class TestMCTSNode:
         assert root.visits == 1
         assert root.total_value == -0.5  # Flipped for opponent
 
+    def test_mcts_node_select_child(self):
+        """With equal priors and visits, the higher-valued child wins."""
+        game_state = _main_phase_state_with_land()
+        node = MCTSNode(game_state)
+        assert len(node.untried_actions) >= 2
+
+        child1 = node.expand()
+        child2 = node.expand()
+
+        child1.backup(0.8)
+        child2.backup(0.3)
+
+        assert node.select_child() is child1
+
 
 class TestMCTSAgent:
     """Test MCTSAgent implementation."""
@@ -198,6 +244,19 @@ class TestMCTSAgent:
         agent = MCTSAgent(player_id=0)
         game_history = []
         agent.update_from_game(game_history)  # Should not raise
+
+    def test_mcts_agent_with_custom_parameters(self):
+        """Constructor parameters are stored on the agent."""
+        agent = MCTSAgent(
+            player_id=1,
+            simulations=500,
+            simulation_time=2.0,
+            c_puct=2.0,
+        )
+        assert agent.player_id == 1
+        assert agent.simulations == 500
+        assert agent.simulation_time == 2.0
+        assert agent.c_puct == 2.0
 
 
 class TestNeuralAgent:
@@ -255,3 +314,67 @@ class TestNeuralAgent:
         agent = NeuralAgent(player_id=0, policy_value_network=network)
         game_history = []
         agent.update_from_game(game_history)  # Should not raise
+
+    def test_neural_agent_with_temperature(self):
+        """High and low temperature agents both return an Action."""
+
+        class MockNetwork:
+            def __call__(self, game_state):
+                import torch
+
+                policy = torch.zeros(10000)
+                policy[0] = 0.9
+                policy[1] = 0.1
+                return policy, torch.tensor(0.0)
+
+        network = MockNetwork()
+        game_state = _main_phase_state_with_land()
+
+        for temperature in (2.0, 0.1):
+            agent = NeuralAgent(
+                player_id=0,
+                policy_value_network=network,
+                temperature=temperature,
+            )
+            assert isinstance(agent.select_action(game_state), Action)
+
+
+class TestAgentIntegration:
+    """Integration tests across agent classes."""
+
+    def test_agent_action_validity(self):
+        """Random and MCTS agents only select legal actions."""
+        game_state = _main_phase_state_with_land()
+        bolt = Card(
+            name="Lightning Bolt",
+            card_types=["Instant"],
+            converted_mana_cost=1,
+        )
+        game_state.players[0].hand.add_card(bolt)
+        game_state.players[0].mana_pool = {"R": 1}
+
+        agents = [
+            RandomAgent(player_id=0, seed=42),
+            MCTSAgent(player_id=0, simulations=5),
+        ]
+        for agent in agents:
+            action = agent.select_action(game_state)
+            assert isinstance(action, Action)
+            assert action.is_valid(game_state) is True
+
+    def test_agent_player_id_consistency(self):
+        """Each agent's action carries its own player ID."""
+        game_state = _main_phase_state_with_land()
+        game_state.players[1].hand.add_card(
+            Card(name="Forest", card_types=["Land"])
+        )
+
+        action0 = RandomAgent(player_id=0, seed=42).select_action(game_state)
+
+        # Hand the turn and priority to player 1 for their agent's pick
+        game_state.active_player = 1
+        game_state.priority_player = 1
+        action1 = RandomAgent(player_id=1, seed=24).select_action(game_state)
+
+        assert action0.player_id == 0
+        assert action1.player_id == 1
