@@ -1,0 +1,8 @@
+iter  0  win_rate 0.100  (untrained baseline)
+iter  1  win_rate 0.900  loss 11.5854  examples 502  mean_turns 31.7
+iter  2  win_rate 0.200  loss 4.8119  examples 1094  mean_turns 32.3
+iter  3  win_rate 0.100  loss 3.5931  examples 1620  mean_turns 32.0
+resumed from checkpoints/seed0_v6/iter_003.pt (iteration 3)
+iter  4  win_rate 0.000  loss 3.1034  examples 2153  mean_turns 33.0
+iter  5  win_rate 0.500  loss 2.9134  examples 2682  mean_turns 34.8
+iter  6  win_rate 0.200  loss 2.8730  examples 3139  mean_turns 27.3
