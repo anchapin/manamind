@@ -43,10 +43,13 @@ def test_value_network_is_consulted() -> None:
 
 
 def test_value_is_flipped_for_the_opponent() -> None:
-    """The value head speaks for the active player, not for us."""
+    """The value head speaks for the player holding priority, not for us."""
     network = FakeNetwork(value=0.5)
     state = create_standard_game_start()
-    state.active_player = 0
+    state.priority_player = 0
+
+    ours = MCTSAgent(0, value_network=network)._evaluate_with_network(state)
+    assert ours == 0.5
 
     ours = MCTSAgent(0, value_network=network)._evaluate_with_network(state)
     theirs = MCTSAgent(1, value_network=network)._evaluate_with_network(state)
@@ -141,3 +144,94 @@ def test_search_policy_is_uniform_before_any_search() -> None:
     policy = agent.last_search_policy(10)
 
     assert np.allclose(policy, 0.1)
+
+
+def test_value_perspective_follows_priority_not_turn() -> None:
+    """A defender choosing blocks reads the value as its own."""
+    network = FakeNetwork(value=0.5)
+    state = create_standard_game_start()
+    state.active_player = 0
+    state.priority_player = 1
+
+    defender = MCTSAgent(1, value_network=network)
+    assert defender._evaluate_with_network(state) == 0.5
+
+
+def test_root_noise_reshapes_priors_but_keeps_them_a_distribution() -> None:
+    state = create_standard_game_start()
+    agent = MCTSAgent(0, simulations=1, root_dirichlet_alpha=0.3)
+    root = MCTSNode(state)
+    root.action_priors = {1: 0.9, 2: 0.1}
+    agent._add_root_noise(root)
+    assert abs(sum(root.action_priors.values()) - 1.0) < 1e-9
+    assert root.action_priors[2] >= 0.075  # at least (1 - 0.25) * 0.1
+
+
+def test_no_root_noise_by_default() -> None:
+    root = MCTSNode(create_standard_game_start())
+    root.action_priors = {1: 0.9, 2: 0.1}
+    MCTSAgent(0)._add_root_noise(root)
+    assert root.action_priors == {1: 0.9, 2: 0.1}
+
+
+def test_temperature_zero_is_the_default_and_deterministic() -> None:
+    assert MCTSAgent(0).temperature == 0.0
+
+
+def test_first_play_urgency_is_off_by_default() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    assert parent.fpu_reduction is None
+    assert parent.first_play_value() == 0.0
+
+
+def test_first_play_urgency_uses_visited_siblings() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.1
+    visited_a = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_a.visits, visited_a.total_value = 4, -2.0  # Q = -0.5
+    visited_b = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_b.visits, visited_b.total_value = 2, 0.6  # Q = +0.3
+    unvisited = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, visited_a), (None, visited_b), (None, unvisited)]
+    parent.visits = 6
+
+    assert abs(parent.first_play_value() - (-0.1 - 0.1)) < 1e-9
+    unvisited.prior_prob = 0.0
+    assert abs(parent.ucb1_score(unvisited) - (-0.2)) < 1e-9
+
+
+def test_first_play_urgency_without_visited_siblings_is_zero() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.25
+    child = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, child)]
+    assert parent.first_play_value() == 0.0
+
+
+def test_forced_move_skips_search_and_reports_one_hot() -> None:
+    from manamind.core.action import Action, ActionType
+
+    agent = MCTSAgent(player_id=0, simulations=50, simulation_time=5.0)
+    only = Action(action_type=ActionType.PASS_PRIORITY, player_id=0)
+    agent.action_space.get_legal_actions = lambda state: [only]
+
+    chosen = agent.select_action(create_standard_game_start())
+
+    assert chosen is only
+    assert agent.last_was_forced
+    policy = agent.last_search_policy(len(agent.action_space.action_to_id))
+    assert policy.sum() == 1.0
+    assert (
+        policy[agent.action_space.action_to_id[only.action_type.value]] == 1.0
+    )
+
+
+def test_real_choice_is_not_marked_forced() -> None:
+    from manamind.core.action import Action, ActionType
+
+    agent = MCTSAgent(player_id=0, simulations=4, simulation_time=5.0)
+    a = Action(action_type=ActionType.PASS_PRIORITY, player_id=0)
+    b = Action(action_type=ActionType.CONCEDE, player_id=0)
+    agent.action_space.get_legal_actions = lambda state: [a, b]
+    agent.select_action(create_standard_game_start())
+    assert not agent.last_was_forced

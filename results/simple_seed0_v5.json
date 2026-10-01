@@ -1,0 +1,38 @@
+{
+  "seed": 0,
+  "iterations": 6,
+  "games_per_iteration": 6,
+  "eval_games": 10,
+  "simulations": 10,
+  "baseline_win_rate": 0.0,
+  "results": [
+    {
+      "iteration": 1,
+      "win_rate": 0.1,
+      "mean_loss": 10.250818848609924,
+      "examples": 844,
+      "mean_turns": 46.5
+    },
+    {
+      "iteration": 2,
+      "win_rate": 0.0,
+      "mean_loss": 4.550202667713165,
+      "examples": 1322,
+      "mean_turns": 31.333333333333332
+    },
+    {
+      "iteration": 3,
+      "win_rate": 0.0,
+      "mean_loss": 3.4618100225925446,
+      "examples": 1971,
+      "mean_turns": 42.833333333333336
+    },
+    {
+      "iteration": 4,
+      "win_rate": 0.0,
+      "mean_loss": 3.289553612470627,
+      "examples": 2506,
+      "mean_turns": 33.5
+    }
+  ]
+}

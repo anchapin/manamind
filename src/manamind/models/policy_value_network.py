@@ -5,7 +5,7 @@ both policy (action prediction) and value (position evaluation) estimation
 in a single network, similar to AlphaZero.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -34,6 +34,7 @@ class PolicyValueNetwork(nn.Module):
         action_space_size: int = 10000,  # Maximum number of possible actions
         dropout_rate: float = 0.1,
         use_attention: bool = True,
+        state_encoder: Optional[nn.Module] = None,
     ):
         """Initialize the policy-value network.
 
@@ -45,6 +46,9 @@ class PolicyValueNetwork(nn.Module):
             action_space_size: Size of the action space
             dropout_rate: Dropout rate for regularization
             use_attention: Whether to use attention mechanisms
+            state_encoder: Module turning a GameState into a state_dim
+                vector. Defaults to the full GameStateEncoder; the simple
+                game mode supplies a much cheaper one.
         """
         super().__init__()
 
@@ -54,7 +58,9 @@ class PolicyValueNetwork(nn.Module):
         self.use_attention = use_attention
 
         # Game state encoder
-        self.state_encoder = GameStateEncoder(output_dim=state_dim)
+        self.state_encoder = state_encoder or GameStateEncoder(
+            output_dim=state_dim
+        )
 
         # Input projection
         self.input_projection = nn.Linear(state_dim, hidden_dim)
@@ -107,6 +113,22 @@ class PolicyValueNetwork(nn.Module):
             elif isinstance(module, nn.LayerNorm):
                 nn.init.constant_(module.bias, 0)
                 nn.init.constant_(module.weight, 1.0)
+
+        # The value head ends in tanh, whose gradient vanishes near the
+        # asymptotes. He initialisation on the last linear layer leaves the
+        # pre-activation well outside tanh's useful range, so an untrained
+        # head returns the same saturated value for every position: search
+        # then sees no difference between moves and cannot rank them, and
+        # training barely moves it. Start the head small so it predicts
+        # roughly zero and has real gradient to learn with.
+        final_value_layer = None
+        for module in self.value_head:
+            if isinstance(module, nn.Linear):
+                final_value_layer = module
+        if final_value_layer is not None:
+            nn.init.normal_(final_value_layer.weight, mean=0.0, std=0.01)
+            if final_value_layer.bias is not None:
+                nn.init.constant_(final_value_layer.bias, 0)
 
     def forward(self, game_state: Any) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through the network.
@@ -282,7 +304,7 @@ class PolicyValueLoss(nn.Module):
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
-            "l2_loss": float(l2_loss),
+            "l2_loss": l2_loss.item(),
         }
 
         return total_loss, loss_dict

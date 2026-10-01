@@ -1,0 +1,8 @@
+iter  0  win_rate 0.000  (untrained baseline)
+/workspace/manamind/src/manamind/models/policy_value_network.py:307: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:820.)
+  "l2_loss": float(l2_loss),
+iter  1  win_rate 0.100  loss 10.2508  examples 844  mean_turns 46.5
+iter  2  win_rate 0.000  loss 4.5502  examples 1322  mean_turns 31.3
+iter  3  win_rate 0.000  loss 3.4618  examples 1971  mean_turns 42.8
+iter  4  win_rate 0.000  loss 3.2896  examples 2506  mean_turns 33.5

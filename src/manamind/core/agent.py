@@ -21,6 +21,10 @@ from manamind.core.game_state import GameState
 
 logger = logging.getLogger(__name__)
 
+# Share of prior mass spread uniformly over a node's legal actions, so
+# no legal move is left with a prior of exactly zero.
+PRIOR_UNIFORM_FLOOR = 0.25
+
 
 class Agent(ABC):
     """Abstract base class for all ManaMind agents."""
@@ -110,6 +114,13 @@ class MCTSNode:
         # child created later by expand() inherits the right prior.
         self.action_priors: Dict[int, float] = {}
 
+        # First-play urgency. None keeps the old behaviour (an unvisited
+        # child scores 0 for exploitation). A float means an unvisited child
+        # starts at the mean value of its already-visited siblings minus this
+        # reduction, so the search judges an untried move against what this
+        # position is actually worth instead of against a flat 0.
+        self.fpu_reduction: Optional[float] = None
+
         # Untried actions
         action_space = ActionSpace()
         self.untried_actions = action_space.get_legal_actions(game_state)
@@ -137,11 +148,10 @@ class MCTSNode:
         Returns:
             Selection score; higher is more worth searching
         """
-        exploitation = (
-            child_node.total_value / child_node.visits
-            if child_node.visits > 0
-            else 0.0
-        )
+        if child_node.visits > 0:
+            exploitation = child_node.total_value / child_node.visits
+        else:
+            exploitation = self.first_play_value()
 
         # PUCT exploration: prior * sqrt(parent visits) / (1 + child visits).
         # Unlike UCB1 this is finite for an unvisited child, so the prior
@@ -155,6 +165,19 @@ class MCTSNode:
         )
 
         return exploitation + exploration
+
+    def first_play_value(self) -> float:
+        """Exploitation score for a child that has not been visited yet."""
+        if self.fpu_reduction is None:
+            return 0.0
+        visited = [
+            child.total_value / child.visits
+            for _, child in self.children
+            if child.visits > 0
+        ]
+        if not visited:
+            return 0.0
+        return sum(visited) / len(visited) - self.fpu_reduction
 
     def select_child(self) -> MCTSNode:
         """Select the child with the highest UCB1 score."""
@@ -171,10 +194,15 @@ class MCTSNode:
         action = self.untried_actions.pop()
         new_state = action.execute(self.game_state)
         child_node = MCTSNode(new_state, action, self)
+        child_node.fpu_reduction = self.fpu_reduction
 
         # Carry over the policy prior for this action, if one was set.
+        # The default is uniform rather than zero: a zero prior removes a
+        # child from PUCT exploration permanently.
         if self.action_priors:
-            child_node.prior_prob = self.action_priors.get(id(action), 0.0)
+            child_node.prior_prob = self.action_priors.get(
+                id(action), 1.0 / max(len(self.action_priors), 1)
+            )
 
         self.children.append((action, child_node))
         return child_node
@@ -200,6 +228,10 @@ class MCTSAgent(Agent):
         simulations: int = 1000,
         simulation_time: float = 1.0,
         c_puct: float = 1.0,
+        root_dirichlet_alpha: Optional[float] = None,
+        root_noise_fraction: float = 0.25,
+        temperature: float = 0.0,
+        fpu_reduction: Optional[float] = None,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -210,6 +242,13 @@ class MCTSAgent(Agent):
             simulations: Number of MCTS simulations per move
             simulation_time: Time limit for MCTS (seconds)
             c_puct: Exploration parameter for PUCT algorithm
+            root_dirichlet_alpha: When set, mix Dirichlet(alpha) noise into
+                the root priors (AlphaZero self-play exploration). Leave
+                None for evaluation and real play.
+            root_noise_fraction: Weight of that noise in the mixed prior.
+            temperature: 0 plays the most-visited move. Above 0, sample the
+                move with probability proportional to visits ** (1 / T),
+                as AlphaZero does in self-play so games stay varied.
         """
         super().__init__(player_id)
         self.policy_network = policy_network
@@ -221,6 +260,11 @@ class MCTSAgent(Agent):
         self.simulations = simulations
         self.simulation_time = simulation_time
         self.c_puct = c_puct
+        self.root_dirichlet_alpha = root_dirichlet_alpha
+        self.root_noise_fraction = root_noise_fraction
+        self.temperature = temperature
+        self.fpu_reduction = fpu_reduction
+        self._last_forced: Optional[Action] = None
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -232,12 +276,25 @@ class MCTSAgent(Agent):
         Returns:
             The selected action
         """
+        # A forced move (one legal action) needs no search. Searching it
+        # anyway wastes the budget, and recording its trivial visit
+        # distribution floods the policy target with that action: about
+        # half of all simple-mode decisions are forced passes.
+        legal = self.action_space.get_legal_actions(game_state)
+        if len(legal) == 1:
+            self._last_root = None
+            self._last_forced = legal[0]
+            return legal[0]
+        self._last_forced = None
+
         root = MCTSNode(game_state)
+        root.fpu_reduction = self.fpu_reduction
         self._last_root = root
 
         # Priors shape which moves PUCT explores first. Set them even
         # without a network: a uniform prior keeps selection well defined.
         self._set_prior_probabilities(root)
+        self._add_root_noise(root)
 
         start_time = time.time()
         simulation_count = 0
@@ -264,10 +321,15 @@ class MCTSAgent(Agent):
             # Simulation phase - evaluate position
             value = self._evaluate_position(node.game_state)
 
-            # Backpropagation phase - update statistics
-            for node in reversed(path):
-                node.backup(value)
-                value = -value  # Flip for opponent
+            # Backpropagation phase - update statistics.
+            # The leaf value is from this agent's perspective. Each node
+            # stores value from the perspective of the player who chose the
+            # action leading to it, so selection can maximise Q at every
+            # level. Flipping the sign once per tree level instead assumes
+            # players strictly alternate, which MTG does not: one player
+            # often takes several actions in a row (land, spell, spell),
+            # and per-level flipping scrambles the sign by depth.
+            self._backup_path(path, value)
 
             simulation_count += 1
 
@@ -277,9 +339,28 @@ class MCTSAgent(Agent):
             legal_actions = self.action_space.get_legal_actions(game_state)
             return random.choice(legal_actions)
 
+        # Most visits wins; ties (common at low simulation counts, where
+        # PUCT spreads visits almost evenly) go to the better mean value,
+        # then the higher prior. Breaking ties by list order instead always
+        # picked the first-expanded child, which is pass_priority because
+        # legal actions list it last and expand() pops from the end.
+        if self.temperature > 0 and root.children:
+            weights = [
+                child.visits ** (1.0 / self.temperature)
+                for _, child in root.children
+            ]
+            if sum(weights) > 0:
+                return random.choices(
+                    [action for action, _ in root.children], weights=weights
+                )[0]
+
         best_child = max(
             (child for _, child in root.children),
-            key=lambda child: child.visits,
+            key=lambda child: (
+                child.visits,
+                child.total_value / child.visits if child.visits else 0.0,
+                child.prior_prob,
+            ),
         )
         if best_child.action:
             return best_child.action
@@ -291,6 +372,26 @@ class MCTSAgent(Agent):
             if legal_actions
             else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
+
+    def _backup_path(self, path: List[MCTSNode], value: float) -> None:
+        """Propagate a leaf value up the path with per-node perspective.
+
+        Args:
+            path: Nodes from root to leaf, in order
+            value: Leaf evaluation from this agent's perspective
+        """
+        for node in path:
+            node.visits += 1
+            if node.parent is None:
+                node.total_value += value
+                continue
+            mover = node.parent.game_state.priority_player
+            node.total_value += value if mover == self.player_id else -value
+
+    @property
+    def last_was_forced(self) -> bool:
+        """True when the last select_action had exactly one legal move."""
+        return getattr(self, "_last_forced", None) is not None
 
     def last_search_policy(self, width: int) -> ndarray[Any, Any]:
         """Visit-count distribution from the most recent search.
@@ -309,6 +410,15 @@ class MCTSAgent(Agent):
         """
         root = self._last_root
         policy = np.zeros(width, dtype=np.float32)
+
+        forced = getattr(self, "_last_forced", None)
+        if root is None and forced is not None:
+            index = self.action_space.action_to_id.get(
+                forced.action_type.value
+            )
+            if index is not None and index < width:
+                policy[index] = 1.0
+                return policy
 
         if root is None or not root.children:
             policy[:] = 1.0 / width
@@ -359,21 +469,44 @@ class MCTSAgent(Agent):
         # several legal actions can share one index; they split that mass
         # evenly rather than each claiming it.
         width = probs.numel()
-        raw: List[float] = []
+        indices: List[Optional[int]] = []
         for action in actions:
             index = self.action_space.action_to_id.get(
                 action.action_type.value
             )
             if index is None or index >= width:
+                indices.append(None)
+            else:
+                indices.append(index)
+
+        shared: Dict[int, int] = {}
+        for index in indices:
+            if index is not None:
+                shared[index] = shared.get(index, 0) + 1
+
+        raw: List[float] = []
+        for index in indices:
+            if index is None:
                 raw.append(0.0)
             else:
-                raw.append(float(probs[index]))
+                raw.append(float(probs[index]) / shared[index])
 
         total = sum(raw)
+        count = len(actions)
         if total <= 0:
             return {}
 
-        return {position: value / total for position, value in enumerate(raw)}
+        # Mix in a uniform floor. A prior of exactly zero is absorbing
+        # under PUCT: the exploration term vanishes, so once such a child
+        # has been visited and scored badly it can never be revisited, and
+        # one action with all the mass takes every remaining simulation.
+        # Today's action space gives whole classes of legal moves a zero
+        # prior, so the floor is what keeps the search looking at them.
+        floor = PRIOR_UNIFORM_FLOOR
+        return {
+            position: (1.0 - floor) * (value / total) + floor / count
+            for position, value in enumerate(raw)
+        }
 
     def _node_actions(self, node: MCTSNode) -> List[Action]:
         """All legal actions at a node, expanded or not, in a stable order."""
@@ -398,14 +531,36 @@ class MCTSAgent(Agent):
             uniform = 1.0 / len(actions)
             priors = {position: uniform for position in range(len(actions))}
 
+        fallback = 1.0 / len(actions)
         node.action_priors = {
-            id(action): priors.get(position, 0.0)
+            id(action): priors.get(position, fallback)
             for position, action in enumerate(actions)
         }
 
         # Children that already exist get their prior now.
         for action, child in node.children:
-            child.prior_prob = node.action_priors.get(id(action), 0.0)
+            child.prior_prob = node.action_priors.get(id(action), fallback)
+
+    def _add_root_noise(self, root: MCTSNode) -> None:
+        """Mix Dirichlet noise into the root priors for self-play.
+
+        Without it an untrained policy head is self-reinforcing: search
+        follows the prior, the visit counts it produces become the training
+        target, and the network learns its own starting bias. With the
+        simple-mode network that bias was pass_priority, so both self-play
+        seats passed every turn until someone drew from an empty library.
+        """
+        alpha = self.root_dirichlet_alpha
+        if not alpha or len(root.action_priors) < 2:
+            return
+        keys = list(root.action_priors)
+        draws = [random.gammavariate(alpha, 1.0) for _ in keys]
+        total = sum(draws) or 1.0
+        frac = self.root_noise_fraction
+        for key, draw in zip(keys, draws):
+            root.action_priors[key] = (1.0 - frac) * root.action_priors[
+                key
+            ] + frac * (draw / total)
 
     def _evaluate_position(self, game_state: GameState) -> float:
         """Evaluate a game position.
@@ -459,9 +614,11 @@ class MCTSAgent(Agent):
         if not math.isfinite(scalar):
             return self._heuristic_evaluation(game_state)
 
-        # The value head is trained from the active player's point of view;
-        # flip it when this agent is not the one to act.
-        if game_state.active_player != self.player_id:
+        # Self-play labels each position from the point of view of the
+        # player holding priority (the one choosing the move), so read the
+        # value head the same way. Using active_player here disagreed with
+        # the labels whenever the defender acts, e.g. every block decision.
+        if game_state.priority_player != self.player_id:
             scalar = -scalar
 
         return max(-1.0, min(1.0, scalar))
@@ -475,13 +632,27 @@ class MCTSAgent(Agent):
         Returns:
             Heuristic value (-1 to 1)
         """
-        # Simple life difference heuristic
-        my_life = game_state.players[self.player_id].life
-        opp_life = game_state.players[1 - self.player_id].life
 
-        life_diff = my_life - opp_life
-        # Normalize to roughly [-1, 1]
-        return max(-1.0, min(1.0, life_diff / 20.0))
+        # Life alone is flat for the first several turns, so every early
+        # move scored 0.0 and search had nothing to rank. Count material on
+        # the battlefield and lands in play too.
+        def material(player: Any) -> float:
+            total = 0.0
+            for card in player.battlefield.cards:
+                if card.is_creature():
+                    total += (card.current_power() or 0) + 0.5 * (
+                        card.current_toughness() or 0
+                    )
+                elif card.is_land():
+                    total += 0.5
+            return total
+
+        me = game_state.players[self.player_id]
+        opp = game_state.players[1 - self.player_id]
+        score = (me.life - opp.life) / 20.0 + (
+            material(me) - material(opp)
+        ) / 10.0
+        return math.tanh(score)
 
     def update_from_game(
         self, game_history: List[Tuple[GameState, Action, float]]
