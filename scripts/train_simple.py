@@ -221,6 +221,32 @@ def load_checkpoint(path: Path) -> PolicyValueNetwork:
     return network
 
 
+def _write_results(
+    out: Optional[Path],
+    seed: int,
+    iterations: int,
+    games: int,
+    eval_games: int,
+    simulations: int,
+    baseline: float,
+    results: List[IterationResult],
+) -> None:
+    """Write the curve so far; called every iteration so a crash keeps it."""
+    if out is None:
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "seed": seed,
+        "iterations": iterations,
+        "games_per_iteration": games,
+        "eval_games": eval_games,
+        "simulations": simulations,
+        "baseline_win_rate": baseline,
+        "results": [r.as_dict() for r in results],
+    }
+    out.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def train(
     iterations: int,
     games: int,
@@ -296,6 +322,16 @@ def train(
             mean_turns=float(np.mean(turns)),
         )
         results.append(result)
+        _write_results(
+            out,
+            seed,
+            iterations,
+            games,
+            eval_games,
+            simulations,
+            baseline,
+            results,
+        )
         if checkpoint_dir is not None:
             save_checkpoint(
                 checkpoint_dir / f"iter_{iteration:03d}.pt",
@@ -313,18 +349,16 @@ def train(
             flush=True,
         )
 
-    if out is not None:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "seed": seed,
-            "iterations": iterations,
-            "games_per_iteration": games,
-            "eval_games": eval_games,
-            "simulations": simulations,
-            "baseline_win_rate": baseline,
-            "results": [r.as_dict() for r in results],
-        }
-        out.write_text(json.dumps(payload, indent=2) + "\n")
+    _write_results(
+        out,
+        seed,
+        iterations,
+        games,
+        eval_games,
+        simulations,
+        baseline,
+        results,
+    )
 
     return results
 

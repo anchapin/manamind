@@ -64,9 +64,10 @@ def main() -> None:
                     f"win_rate {rate:.3f}",
                     flush=True,
                 )
-    if args.out is not None:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(rows, indent=2) + "\n")
+                # Write after every cell so a killed run keeps its results.
+                if args.out is not None:
+                    args.out.parent.mkdir(parents=True, exist_ok=True)
+                    args.out.write_text(json.dumps(rows, indent=2) + "\n")
 
 
 if __name__ == "__main__":
