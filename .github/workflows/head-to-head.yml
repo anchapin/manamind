@@ -1,0 +1,95 @@
+# Plays two trained runs against each other on Alex's PC (self-hosted runner
+# labelled "manamind-train"). Manual dispatch only, like train-remote.yml:
+# nothing here fires on pushes or pull requests.
+name: Head-to-head on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch with scripts/head_to_head.py and both searches"
+        required: true
+        default: "feat/gumbel-search"
+      a_run:
+        description: "Run name A (uses ~/manamind-runs/<a_run>/checkpoints)"
+        required: true
+        default: "seed0_v7"
+      a_search:
+        description: "Root search for A"
+        type: choice
+        options: [puct, gumbel]
+        default: puct
+      b_run:
+        description: "Run name B"
+        required: true
+        default: "seed0_g1"
+      b_search:
+        description: "Root search for B"
+        type: choice
+        options: [puct, gumbel]
+        default: gumbel
+      games:
+        description: "Games (even; each deal is played with seats swapped)"
+        required: true
+        default: "100"
+      simulations:
+        description: "Search simulations per move, both sides"
+        required: true
+        default: "40"
+
+permissions:
+  contents: read
+
+jobs:
+  match:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 720
+    env:
+      A_RUN: ${{ github.event.inputs.a_run }}
+      B_RUN: ${{ github.event.inputs.b_run }}
+      A_SEARCH: ${{ github.event.inputs.a_search }}
+      B_SEARCH: ${{ github.event.inputs.b_search }}
+      GAMES: ${{ github.event.inputs.games }}
+      SIMS: ${{ github.event.inputs.simulations }}
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Validate inputs
+        run: |
+          for v in "$A_RUN" "$B_RUN"; do
+            [[ "$v" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run name: $v"; exit 1; }
+          done
+          [[ "$GAMES" =~ ^[0-9]+$ && "$SIMS" =~ ^[0-9]+$ ]] || { echo "games/simulations must be numbers"; exit 1; }
+          for v in "$A_RUN" "$B_RUN"; do
+            ls "$HOME/manamind-runs/$v/checkpoints"/iter_*.pt >/dev/null || { echo "no checkpoints for $v"; exit 1; }
+          done
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e .
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Play the match (latest checkpoint of each run)
+        run: |
+          mkdir -p results
+          OUT="results/h2h_${A_RUN}_vs_${B_RUN}"
+          PYTHONPATH=src python scripts/head_to_head.py \
+            --a "$HOME/manamind-runs/$A_RUN/checkpoints" --a-search "$A_SEARCH" \
+            --b "$HOME/manamind-runs/$B_RUN/checkpoints" --b-search "$B_SEARCH" \
+            --games "$GAMES" --simulations "$SIMS" \
+            --out "$OUT.json" 2>&1 | tee "$OUT.log"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h2h-${{ github.event.inputs.a_run }}-vs-${{ github.event.inputs.b_run }}
+          path: results/h2h_*
