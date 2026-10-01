@@ -81,12 +81,28 @@ class IterationResult:
         }
 
 
+def value_target(z: float, q_root: Optional[float], value_mix: float) -> float:
+    """Soft-Z value target: blend the game result with the search's view.
+
+    ``z`` is the final result from the mover's side (+1, 0, -1) and
+    ``q_root`` the root's mean value after search, from the same side.
+    ``value_mix`` 0 trains on the result alone (plain AlphaZero); 1 trains
+    on the search value alone. Without a search value, the result is used.
+    """
+    if q_root is None or value_mix == 0.0:
+        return z
+    return (1.0 - value_mix) * z + value_mix * q_root
+
+
 def play_game(
-    agents: Dict[int, object], seed: int, record: bool = False
+    agents: Dict[int, object],
+    seed: int,
+    record: bool = False,
+    value_mix: float = 0.0,
 ) -> Tuple[Optional[int], int, List[Example]]:
     """Play one simple-mode game. Returns winner, turns, examples."""
     state = create_simple_game_start(seed)
-    history: List[Tuple[GameState, np.ndarray, int]] = []
+    history: List[Tuple[GameState, np.ndarray, int, Optional[float]]] = []
 
     for _ in range(MAX_STEPS):
         if state.is_game_over():
@@ -108,6 +124,7 @@ def play_game(
                         actor.policy_network.action_space_size
                     ),
                     state.priority_player,
+                    actor.last_root_value(),
                 )
             )
         state = action.execute(state)
@@ -115,11 +132,11 @@ def play_game(
     winner = state.winner()
     examples: List[Example] = []
     if record:
-        for snapshot, policy, mover in history:
-            value = (
-                0.0 if winner is None else (1.0 if winner == mover else -1.0)
+        for snapshot, policy, mover, q_root in history:
+            z = 0.0 if winner is None else (1.0 if winner == mover else -1.0)
+            examples.append(
+                Example(snapshot, policy, value_target(z, q_root, value_mix))
             )
-            examples.append(Example(snapshot, policy, value))
     return winner, state.turn_number, examples
 
 
@@ -282,6 +299,7 @@ def _write_results(
     simulations: int,
     baseline: float,
     results: List[IterationResult],
+    value_mix: float = 0.0,
 ) -> None:
     """Write the curve so far; called every iteration so a crash keeps it."""
     if out is None:
@@ -293,6 +311,7 @@ def _write_results(
         "games_per_iteration": games,
         "eval_games": eval_games,
         "simulations": simulations,
+        "value_mix": value_mix,
         "baseline_win_rate": baseline,
         "results": [r.as_dict() for r in results],
     }
@@ -310,6 +329,7 @@ def train(
     fpu_reduction: Optional[float] = None,
     resume: bool = False,
     search: str = "puct",
+    value_mix: float = 0.0,
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -382,6 +402,7 @@ def train(
                 agents,
                 seed=seed * 1000 + iteration * 100 + game,
                 record=True,
+                value_mix=value_mix,
             )
             buffer.extend(examples)
             turns.append(length)
@@ -414,6 +435,7 @@ def train(
             simulations,
             baseline,
             results,
+            value_mix,
         )
         if checkpoint_dir is not None:
             save_checkpoint(
@@ -448,6 +470,7 @@ def train(
         simulations,
         baseline,
         results,
+        value_mix,
     )
 
     return results
@@ -481,6 +504,13 @@ def main() -> None:
         help="root search: AlphaZero PUCT (default) or Gumbel AlphaZero",
     )
     parser.add_argument(
+        "--value-mix",
+        type=float,
+        default=0.0,
+        help="soft-Z value target: weight of the root search value against "
+        "the game result (0 = result only, the AlphaZero default)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -499,6 +529,7 @@ def main() -> None:
         fpu_reduction=args.fpu_reduction,
         resume=args.resume,
         search=args.search,
+        value_mix=args.value_mix,
     )
 
 

@@ -545,6 +545,22 @@ class MCTSAgent(Agent):
             mover = node.parent.game_state.priority_player
             node.total_value += value if mover == self.player_id else -value
 
+    def last_root_value(self) -> Optional[float]:
+        """Mean value at the root of the most recent search.
+
+        This is what the search concluded about the position it was asked
+        to move from, from this agent's point of view (+1 winning, -1
+        losing). Used as the search half of a soft-Z value target.
+
+        Returns:
+            None when no search ran (a forced move) or the root was never
+            visited.
+        """
+        root = self._last_root
+        if root is None or root.visits == 0:
+            return None
+        return root.total_value / root.visits
+
     @property
     def last_was_forced(self) -> bool:
         """True when the last select_action had exactly one legal move."""
