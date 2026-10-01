@@ -10,7 +10,7 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import torch
@@ -518,7 +518,7 @@ class MCTSAgent(Agent):
         self._last_gumbel_policy = [
             (action, float(p)) for (action, _), p in zip(root.children, target)
         ]
-        return root.children[best][0]
+        return cast(Action, root.children[best][0])
 
     def _backup_path(self, path: List[MCTSNode], value: float) -> None:
         """Propagate a leaf value up the path with per-node perspective.
@@ -581,7 +581,7 @@ class MCTSAgent(Agent):
                     policy[index] += probability
             total = policy.sum()
             if total > 0:
-                return policy / total
+                return cast(np.ndarray, policy / total)
             policy[:] = 1.0 / width
             return policy
 

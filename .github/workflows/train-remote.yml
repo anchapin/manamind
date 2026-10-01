@@ -1,0 +1,73 @@
+# Runs manamind training on Alex's own Linux PC (a self-hosted runner
+# labelled "manamind-train"). Manual dispatch only: nothing here fires on
+# pushes or pull requests, so outside code never reaches that machine.
+name: Train on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to train"
+        required: true
+        default: "feat/vertical-slice"
+      run_name:
+        description: "Run name (checkpoints persist under ~/manamind-runs/<run_name>)"
+        required: true
+        default: "seed0_v7"
+      args:
+        description: "Extra args for scripts/train_simple.py"
+        required: true
+        default: "--seed 0 --simulations 40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-pc-${{ github.event.inputs.run_name }}
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 1440
+    env:
+      RUN_NAME: ${{ github.event.inputs.run_name }}
+      TRAIN_ARGS: ${{ github.event.inputs.args }}
+      # Several runner instances can share one PC; keep each job from
+      # grabbing every core for torch's thread pool.
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Validate run name
+        run: |
+          [[ "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run_name"; exit 1; }
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e .
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Train (resumes if this run name already has checkpoints)
+        run: |
+          RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
+          mkdir -p "$RUN_DIR" results
+          read -r -a EXTRA <<< "$TRAIN_ARGS"
+          PYTHONPATH=src python scripts/train_simple.py "${EXTRA[@]}" \
+            --checkpoint-dir "$RUN_DIR/checkpoints" \
+            --out "results/simple_${RUN_NAME}.json" \
+            --resume 2>&1 | tee "results/simple_${RUN_NAME}_run.log"
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ github.event.inputs.run_name }}
+          path: results/simple_${{ github.event.inputs.run_name }}*
