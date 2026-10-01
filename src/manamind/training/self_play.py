@@ -21,7 +21,10 @@ from manamind.core.game_state import GameState, create_standard_game_start
 from manamind.forge_interface import (  # ForgeGameRunner not implemented yet
     ForgeClient,
 )
-from manamind.models.policy_value_network import PolicyValueNetwork
+from manamind.models.policy_value_network import (
+    PolicyValueLoss,
+    PolicyValueNetwork,
+)
 
 # from manamind.training.data_manager import TrainingDataManager
 
@@ -140,6 +143,15 @@ class SelfPlayTrainer:
             Tuple[GameState, ndarray[Any, Any], float]
         ] = []
         self.performance_history: List[Dict[str, Any]] = []
+        self.training_losses: List[Dict[str, Any]] = []
+
+        # Loss and optimizer. The optimizer is built lazily on first use so
+        # that a caller can swap the network before training starts.
+        self.loss_fn = PolicyValueLoss(
+            value_weight=self.config.get("value_loss_weight", 1.0),
+            l2_reg=self.config.get("weight_decay", 1e-4),
+        )
+        self._optimizer: Optional[torch.optim.Optimizer] = None
 
         # Create MCTS agents for self-play
         self.mcts_config = {
@@ -164,6 +176,8 @@ class SelfPlayTrainer:
             "epochs_per_iteration": 10,
             "learning_rate": 0.001,
             "weight_decay": 1e-4,
+            "value_loss_weight": 1.0,
+            "max_grad_norm": 1.0,
             # Evaluation parameters
             "evaluation_frequency": 10,
             "evaluation_games": 50,
@@ -358,31 +372,154 @@ class SelfPlayTrainer:
             msg = f"Trimmed training buffer to {len(self.training_examples)} examples"  # noqa: E501
             logger.info(msg)
 
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Create (once) the optimizer used across training iterations.
+
+        The optimizer holds momentum state, so it must persist across
+        iterations rather than being rebuilt inside the training step.
+        """
+        if self._optimizer is None:
+            self._optimizer = torch.optim.Adam(
+                self.network.parameters(),
+                lr=self.config["learning_rate"],
+                weight_decay=self.config["weight_decay"],
+            )
+        return self._optimizer
+
+    def _encode_batch(
+        self, batch: List[Tuple[GameState, ndarray[Any, Any], float]]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encode a batch of training examples into stacked tensors.
+
+        Args:
+            batch: Training examples as (state, policy target, value target)
+
+        Returns:
+            Tuple of (encoded states, target policies, target values):
+                - states: [batch_size, state_dim]
+                - policies: [batch_size, action_space_size]
+                - values: [batch_size]
+        """
+        action_space = self.network.action_space_size
+
+        states = torch.stack(
+            [self.network.state_encoder(example[0]) for example in batch]
+        )
+
+        policies = torch.zeros(len(batch), action_space)
+        for row, (_, target_policy, _) in enumerate(batch):
+            flat = torch.as_tensor(target_policy, dtype=torch.float32).view(-1)
+            width = min(flat.numel(), action_space)
+            policies[row, :width] = flat[:width]
+
+            # Renormalise: a truncated or all-zero target would otherwise
+            # make the cross-entropy term meaningless.
+            total = policies[row].sum()
+            if total > 0:
+                policies[row] /= total
+            else:
+                policies[row] = 1.0 / action_space
+
+        values = torch.tensor(
+            [float(example[2]) for example in batch], dtype=torch.float32
+        )
+
+        return states, policies, values
+
     def _train_network(self) -> None:
-        """Train the neural network on collected examples."""
+        """Train the neural network on collected examples.
+
+        Runs real gradient descent: minibatch SGD over the replay buffer for
+        the configured number of epochs, updating the policy-value network in
+        place and recording the loss history so training progress is visible.
+        """
         if not self.training_examples:
             logger.warning("No training examples available")
             return
 
-        # TODO: Implement neural network training
-        # This would involve:
-        # 1. Creating data loaders from training examples
-        # 2. Running gradient descent for specified epochs
-        # 3. Updating the policy-value network
-        # 4. Logging training metrics
+        batch_size = self.config["batch_size"]
+        epochs = self.config["epochs_per_iteration"]
+        max_grad_norm = self.config.get("max_grad_norm", 1.0)
+
+        if len(self.training_examples) < batch_size:
+            logger.warning(
+                f"Only {len(self.training_examples)} examples available, "
+                f"need {batch_size} for a full batch; skipping update"
+            )
+            return
+
+        optimizer = self._build_optimizer()
+        self.network.train()
 
         logger.info(
-            f"Training network on {len(self.training_examples)} examples"
+            f"Training network on {len(self.training_examples)} examples "
+            f"for {epochs} epochs (batch size {batch_size})"
         )
 
-        # Placeholder for actual training implementation
-        self.config["batch_size"]
-        epochs = self.config["epochs_per_iteration"]
+        epoch_metrics: List[Dict[str, float]] = []
 
-        # Shuffle training examples
-        random.shuffle(self.training_examples)
+        for epoch in range(epochs):
+            random.shuffle(self.training_examples)
 
-        logger.info(f"Completed {epochs} training epochs")
+            num_batches = len(self.training_examples) // batch_size
+            totals = {"total_loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0}
+
+            for batch_idx in range(num_batches):
+                start = batch_idx * batch_size
+                batch = self.training_examples[start : start + batch_size]
+
+                states, target_policy, target_value = self._encode_batch(batch)
+
+                policy_logits, value_pred = self.network(states)
+                loss, loss_dict = self.loss_fn(
+                    policy_logits,
+                    value_pred,
+                    target_policy,
+                    target_value,
+                    self.network,
+                )
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.network.parameters(), max_grad_norm
+                )
+                optimizer.step()
+
+                for key in totals:
+                    totals[key] += float(loss_dict[key])
+
+            averages = {
+                key: value / max(num_batches, 1)
+                for key, value in totals.items()
+            }
+            averages["epoch"] = float(epoch)
+            epoch_metrics.append(averages)
+
+            logger.info(
+                f"Epoch {epoch + 1}/{epochs}: "
+                f"loss={averages['total_loss']:.4f} "
+                f"policy={averages['policy_loss']:.4f} "
+                f"value={averages['value_loss']:.4f}"
+            )
+
+        self.network.eval()
+
+        if epoch_metrics:
+            self.training_losses.append(
+                {
+                    "iteration": self.current_iteration,
+                    "first_epoch_loss": epoch_metrics[0]["total_loss"],
+                    "final_epoch_loss": epoch_metrics[-1]["total_loss"],
+                    "epochs": epoch_metrics,
+                }
+            )
+
+            logger.info(
+                f"Completed {epochs} training epochs: loss "
+                f"{epoch_metrics[0]['total_loss']:.4f} -> "
+                f"{epoch_metrics[-1]['total_loss']:.4f}"
+            )
 
     def _evaluate_model(self) -> None:
         """Evaluate the current model performance."""
