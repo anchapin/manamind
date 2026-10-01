@@ -10,7 +10,7 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -18,6 +18,7 @@ from numpy import ndarray
 
 from manamind.core.action import Action, ActionSpace, ActionType
 from manamind.core.game_state import GameState
+from manamind.core.observation import contains_hidden, determinize
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,7 @@ class MCTSAgent(Agent):
         gumbel_noise: bool = False,
         c_visit: float = 50.0,
         c_scale: float = 1.0,
+        deck_lists: Optional[Dict[int, Sequence[Any]]] = None,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -265,6 +267,9 @@ class MCTSAgent(Agent):
             c_visit, c_scale: The sigma(q) scaling from Danihelka et al.
                 (2022): sigma(q) = (c_visit + max_b N(b)) * c_scale * q,
                 with q rescaled to [0, 1].
+            deck_lists: Known deck list per player. When the agent is handed
+                an observation with hidden cards, it searches one world
+                sampled consistently with it (see core.observation).
         """
         if search not in ("puct", "gumbel"):
             raise ValueError(f"unknown search {search!r}")
@@ -291,6 +296,7 @@ class MCTSAgent(Agent):
         # (action, probability) pairs from the last Gumbel search: the
         # completed-Q policy target. None after a PUCT search.
         self._last_gumbel_policy: Optional[List[Tuple[Action, float]]] = None
+        self.deck_lists = deck_lists
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -316,6 +322,10 @@ class MCTSAgent(Agent):
 
         if self.search == "gumbel":
             return self._gumbel_select(game_state)
+        # Agents are handed an observation, not the full state. Search needs
+        # a complete state to simulate, so sample one consistent world.
+        if contains_hidden(game_state):
+            game_state = determinize(game_state, self.deck_lists)
 
         root = MCTSNode(game_state)
         root.fpu_reduction = self.fpu_reduction
