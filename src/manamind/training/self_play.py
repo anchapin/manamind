@@ -17,6 +17,7 @@ from tqdm import tqdm
 from manamind.core.action import Action
 from manamind.core.agent import MCTSAgent
 from manamind.core.game_state import GameState, create_standard_game_start
+from manamind.core.observation import observe
 from manamind.forge_interface import (  # ForgeGameRunner not implemented yet
     ForgeClient,
 )
@@ -157,7 +158,9 @@ class SelfPlayTrainer:
             "simulations": self.config["mcts_simulations"],
             "simulation_time": self.config["mcts_time_limit"],
             "c_puct": self.config["c_puct"],
+            "deck_lists": self.config.get("deck_lists"),
         }
+        self._games_played = 0
 
     def _default_config(self) -> Dict[str, Any]:
         """Default training configuration."""
@@ -168,6 +171,12 @@ class SelfPlayTrainer:
             "mcts_simulations": 800,
             "mcts_time_limit": 1.0,
             "c_puct": 1.0,
+            # Known deck list per player ({0: [...], 1: [...]}). With decks,
+            # games start from a seeded shuffle with London mulligans and
+            # agents determinize the hidden cards from these lists. Without
+            # them, games start from the empty placeholder state.
+            "deck_lists": None,
+            "seed": None,
             # Training parameters
             "training_iterations": 1000,
             "examples_buffer_size": 100000,
@@ -317,7 +326,16 @@ class SelfPlayTrainer:
         """Play a game using pure Python simulation (testing without Forge)."""
         try:
             # Create initial game state
-            game_state = create_standard_game_start()
+            deck_lists = self.config.get("deck_lists")
+            base_seed = self.config.get("seed")
+            game_seed = (
+                None if base_seed is None else base_seed + self._games_played
+            )
+            self._games_played += 1
+            game_state = create_standard_game_start(
+                decks=([deck_lists[0], deck_lists[1]] if deck_lists else None),
+                seed=game_seed,
+            )
             game = SelfPlayGame("simulation")
 
             # Target width for policy vectors: match the network's head so
@@ -342,13 +360,18 @@ class SelfPlayTrainer:
                 # training signal: the tree is a policy improvement operator
                 # over the raw network output, so the network is trained
                 # toward what search concluded, not toward a dummy.
-                action = agent.select_action(game_state)
+                # The agent sees only what its player can see (#22). The
+                # training example records that same observation, so the
+                # network learns from the information it will have at play
+                # time, not from the opponent's hand.
+                seen = observe(game_state, current_player)
+                action = agent.select_action(seen)
                 mcts_policy = agent.last_search_policy(
                     self.config.get("action_space_size", action_space_size)
                 )
 
                 # Record move
-                game.add_move(game_state.copy(), action, mcts_policy)
+                game.add_move(seen, action, mcts_policy)
 
                 # Execute action
                 game_state = action.execute(game_state)
