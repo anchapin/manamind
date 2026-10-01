@@ -176,3 +176,33 @@ def test_no_root_noise_by_default() -> None:
 
 def test_temperature_zero_is_the_default_and_deterministic() -> None:
     assert MCTSAgent(0).temperature == 0.0
+
+
+def test_first_play_urgency_is_off_by_default() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    assert parent.fpu_reduction is None
+    assert parent.first_play_value() == 0.0
+
+
+def test_first_play_urgency_uses_visited_siblings() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.1
+    visited_a = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_a.visits, visited_a.total_value = 4, -2.0  # Q = -0.5
+    visited_b = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_b.visits, visited_b.total_value = 2, 0.6  # Q = +0.3
+    unvisited = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, visited_a), (None, visited_b), (None, unvisited)]
+    parent.visits = 6
+
+    assert abs(parent.first_play_value() - (-0.1 - 0.1)) < 1e-9
+    unvisited.prior_prob = 0.0
+    assert abs(parent.ucb1_score(unvisited) - (-0.2)) < 1e-9
+
+
+def test_first_play_urgency_without_visited_siblings_is_zero() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.25
+    child = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, child)]
+    assert parent.first_play_value() == 0.0

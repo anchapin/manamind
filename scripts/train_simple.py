@@ -108,7 +108,11 @@ def play_game(
 
 
 def evaluate(
-    network: PolicyValueNetwork, games: int, simulations: int, seed: int
+    network: PolicyValueNetwork,
+    games: int,
+    simulations: int,
+    seed: int,
+    fpu_reduction: Optional[float] = None,
 ) -> float:
     """Win rate against RandomAgent, seats alternating.
 
@@ -125,6 +129,7 @@ def evaluate(
                 value_network=network,
                 simulations=simulations,
                 simulation_time=30.0,
+                fpu_reduction=fpu_reduction,
             ),
             1 - seat: RandomAgent(1 - seat, seed=seed + game),
         }
@@ -181,6 +186,41 @@ def train_on_buffer(
     return losses
 
 
+def save_checkpoint(
+    path: Path,
+    network: PolicyValueNetwork,
+    optimizer: torch.optim.Optimizer,
+    iteration: int,
+    seed: int,
+    action_space_size: int,
+    result: IterationResult,
+) -> None:
+    """Write weights plus enough metadata to rebuild and re-evaluate."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "network": network.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "iteration": iteration,
+            "seed": seed,
+            "action_space_size": action_space_size,
+            "result": result.as_dict(),
+        },
+        path,
+    )
+
+
+def load_checkpoint(path: Path) -> PolicyValueNetwork:
+    """Rebuild the simple-mode network from a checkpoint."""
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    network = build_simple_network(
+        action_space_size=payload["action_space_size"]
+    )
+    network.load_state_dict(payload["network"])
+    network.eval()
+    return network
+
+
 def train(
     iterations: int,
     games: int,
@@ -188,6 +228,8 @@ def train(
     simulations: int,
     seed: int,
     out: Optional[Path] = None,
+    checkpoint_dir: Optional[Path] = None,
+    fpu_reduction: Optional[float] = None,
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -202,7 +244,11 @@ def train(
     results: List[IterationResult] = []
 
     baseline = evaluate(
-        network, games=eval_games, simulations=simulations, seed=seed * 7919
+        network,
+        games=eval_games,
+        simulations=simulations,
+        seed=seed * 7919,
+        fpu_reduction=fpu_reduction,
     )
     print(
         f"iter  0  win_rate {baseline:.3f}  (untrained baseline)", flush=True
@@ -220,6 +266,7 @@ def train(
                     simulation_time=30.0,
                     root_dirichlet_alpha=ROOT_DIRICHLET_ALPHA,
                     temperature=SELF_PLAY_TEMPERATURE,
+                    fpu_reduction=fpu_reduction,
                 )
                 for pid in (0, 1)
             }
@@ -238,6 +285,7 @@ def train(
             games=eval_games,
             simulations=simulations,
             seed=seed * 7919 + iteration,
+            fpu_reduction=fpu_reduction,
         )
 
         result = IterationResult(
@@ -248,6 +296,16 @@ def train(
             mean_turns=float(np.mean(turns)),
         )
         results.append(result)
+        if checkpoint_dir is not None:
+            save_checkpoint(
+                checkpoint_dir / f"iter_{iteration:03d}.pt",
+                network,
+                optimizer,
+                iteration=iteration,
+                seed=seed,
+                action_space_size=action_space_size,
+                result=result,
+            )
         print(
             f"iter {iteration:>2}  win_rate {win_rate:.3f}  "
             f"loss {result.mean_loss:.4f}  examples {len(buffer)}  "
@@ -279,6 +337,19 @@ def main() -> None:
     parser.add_argument("--simulations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=None,
+        help="save weights after every iteration (iter_NNN.pt)",
+    )
+    parser.add_argument(
+        "--fpu-reduction",
+        type=float,
+        default=None,
+        help="first-play urgency: unvisited moves start at the mean value "
+        "of visited siblings minus this; omit for the old flat 0",
+    )
     args = parser.parse_args()
 
     train(
@@ -288,6 +359,8 @@ def main() -> None:
         simulations=args.simulations,
         seed=args.seed,
         out=args.out,
+        checkpoint_dir=args.checkpoint_dir,
+        fpu_reduction=args.fpu_reduction,
     )
 
 

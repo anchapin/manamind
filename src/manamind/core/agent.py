@@ -114,6 +114,13 @@ class MCTSNode:
         # child created later by expand() inherits the right prior.
         self.action_priors: Dict[int, float] = {}
 
+        # First-play urgency. None keeps the old behaviour (an unvisited
+        # child scores 0 for exploitation). A float means an unvisited child
+        # starts at the mean value of its already-visited siblings minus this
+        # reduction, so the search judges an untried move against what this
+        # position is actually worth instead of against a flat 0.
+        self.fpu_reduction: Optional[float] = None
+
         # Untried actions
         action_space = ActionSpace()
         self.untried_actions = action_space.get_legal_actions(game_state)
@@ -141,11 +148,10 @@ class MCTSNode:
         Returns:
             Selection score; higher is more worth searching
         """
-        exploitation = (
-            child_node.total_value / child_node.visits
-            if child_node.visits > 0
-            else 0.0
-        )
+        if child_node.visits > 0:
+            exploitation = child_node.total_value / child_node.visits
+        else:
+            exploitation = self.first_play_value()
 
         # PUCT exploration: prior * sqrt(parent visits) / (1 + child visits).
         # Unlike UCB1 this is finite for an unvisited child, so the prior
@@ -159,6 +165,19 @@ class MCTSNode:
         )
 
         return exploitation + exploration
+
+    def first_play_value(self) -> float:
+        """Exploitation score for a child that has not been visited yet."""
+        if self.fpu_reduction is None:
+            return 0.0
+        visited = [
+            child.total_value / child.visits
+            for _, child in self.children
+            if child.visits > 0
+        ]
+        if not visited:
+            return 0.0
+        return sum(visited) / len(visited) - self.fpu_reduction
 
     def select_child(self) -> MCTSNode:
         """Select the child with the highest UCB1 score."""
@@ -175,6 +194,7 @@ class MCTSNode:
         action = self.untried_actions.pop()
         new_state = action.execute(self.game_state)
         child_node = MCTSNode(new_state, action, self)
+        child_node.fpu_reduction = self.fpu_reduction
 
         # Carry over the policy prior for this action, if one was set.
         # The default is uniform rather than zero: a zero prior removes a
@@ -211,6 +231,7 @@ class MCTSAgent(Agent):
         root_dirichlet_alpha: Optional[float] = None,
         root_noise_fraction: float = 0.25,
         temperature: float = 0.0,
+        fpu_reduction: Optional[float] = None,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -242,6 +263,7 @@ class MCTSAgent(Agent):
         self.root_dirichlet_alpha = root_dirichlet_alpha
         self.root_noise_fraction = root_noise_fraction
         self.temperature = temperature
+        self.fpu_reduction = fpu_reduction
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -254,6 +276,7 @@ class MCTSAgent(Agent):
             The selected action
         """
         root = MCTSNode(game_state)
+        root.fpu_reduction = self.fpu_reduction
         self._last_root = root
 
         # Priors shape which moves PUCT explores first. Set them even
