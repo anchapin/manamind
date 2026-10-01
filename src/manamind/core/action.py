@@ -10,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import torch
 
@@ -158,7 +158,7 @@ class Action:
         """
         rules = _rules_for(game_state)
         if rules is not None:
-            return rules.apply(game_state, self)
+            return cast(GameState, rules.apply(game_state, self))
 
         if not self.is_valid(game_state):
             raise ValueError(f"Invalid action: {self}")
@@ -420,7 +420,7 @@ class ActionSpace:
         """
         rules = _rules_for(game_state)
         if rules is not None:
-            return rules.legal_actions(game_state)
+            return cast(List[Action], rules.legal_actions(game_state))
 
         legal_actions = []
         current_player_id = game_state.priority_player
