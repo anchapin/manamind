@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from numpy import ndarray
 from tqdm import tqdm
@@ -321,6 +320,10 @@ class SelfPlayTrainer:
             game_state = create_standard_game_start()
             game = SelfPlayGame("simulation")
 
+            # Target width for policy vectors: match the network's head so
+            # the recorded target lines up with what the loss expects.
+            action_space_size = self.network.action_space_size
+
             # Create MCTS agents
             agents = [
                 MCTSAgent(0, self.network, self.network, **self.mcts_config),
@@ -334,13 +337,14 @@ class SelfPlayTrainer:
                 current_player = game_state.priority_player
                 agent = agents[current_player]
 
-                # Get action from MCTS
+                # Get action from MCTS, then take the search's own visit
+                # distribution as the policy target. This is the AlphaZero
+                # training signal: the tree is a policy improvement operator
+                # over the raw network output, so the network is trained
+                # toward what search concluded, not toward a dummy.
                 action = agent.select_action(game_state)
-
-                # TODO: Get MCTS policy for training
-                # For now, use dummy policy
-                mcts_policy = (
-                    np.ones(self.config.get("action_space_size", 1000)) / 1000
+                mcts_policy = agent.last_search_policy(
+                    self.config.get("action_space_size", action_space_size)
                 )
 
                 # Record move
