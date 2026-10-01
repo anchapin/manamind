@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -486,7 +486,17 @@ def create_empty_game_state() -> GameState:
     return GameState(players=(player0, player1))
 
 
-def create_standard_game_start() -> GameState:
-    """Create a game state representing the start of a standard game."""
-    # TODO: Implement proper game start with shuffled libraries, hands, etc.
-    return create_empty_game_state()
+def create_standard_game_start(
+    decks: Optional[Sequence[Sequence[Card]]] = None,
+    seed: Optional[int] = None,
+) -> GameState:
+    """Create the start of a game: seeded shuffle and London mulligans.
+
+    Without decks this returns an empty two-player state, which is what
+    existing callers that only need a placeholder state rely on.
+    """
+    if decks is None:
+        return create_empty_game_state()
+    from manamind.core.game_setup import setup_game
+
+    return setup_game(decks, seed=seed)
