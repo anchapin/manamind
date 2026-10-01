@@ -84,7 +84,12 @@ def play_game(
             break
         actor = agents[state.priority_player]
         action = actor.select_action(state)
-        if record and isinstance(actor, MCTSAgent):
+        # Forced moves carry no decision, so they make no training example.
+        if (
+            record
+            and isinstance(actor, MCTSAgent)
+            and actor.last_was_forced is False
+        ):
             history.append(
                 (
                     state,

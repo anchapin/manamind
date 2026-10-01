@@ -264,6 +264,7 @@ class MCTSAgent(Agent):
         self.root_noise_fraction = root_noise_fraction
         self.temperature = temperature
         self.fpu_reduction = fpu_reduction
+        self._last_forced: Optional[Action] = None
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -275,6 +276,17 @@ class MCTSAgent(Agent):
         Returns:
             The selected action
         """
+        # A forced move (one legal action) needs no search. Searching it
+        # anyway wastes the budget, and recording its trivial visit
+        # distribution floods the policy target with that action: about
+        # half of all simple-mode decisions are forced passes.
+        legal = self.action_space.get_legal_actions(game_state)
+        if len(legal) == 1:
+            self._last_root = None
+            self._last_forced = legal[0]
+            return legal[0]
+        self._last_forced = None
+
         root = MCTSNode(game_state)
         root.fpu_reduction = self.fpu_reduction
         self._last_root = root
@@ -376,6 +388,11 @@ class MCTSAgent(Agent):
             mover = node.parent.game_state.priority_player
             node.total_value += value if mover == self.player_id else -value
 
+    @property
+    def last_was_forced(self) -> bool:
+        """True when the last select_action had exactly one legal move."""
+        return getattr(self, "_last_forced", None) is not None
+
     def last_search_policy(self, width: int) -> ndarray[Any, Any]:
         """Visit-count distribution from the most recent search.
 
@@ -393,6 +410,15 @@ class MCTSAgent(Agent):
         """
         root = self._last_root
         policy = np.zeros(width, dtype=np.float32)
+
+        forced = getattr(self, "_last_forced", None)
+        if root is None and forced is not None:
+            index = self.action_space.action_to_id.get(
+                forced.action_type.value
+            )
+            if index is not None and index < width:
+                policy[index] = 1.0
+                return policy
 
         if root is None or not root.children:
             policy[:] = 1.0 / width
