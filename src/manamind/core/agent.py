@@ -21,6 +21,10 @@ from manamind.core.game_state import GameState
 
 logger = logging.getLogger(__name__)
 
+# Share of prior mass spread uniformly over a node's legal actions, so
+# no legal move is left with a prior of exactly zero.
+PRIOR_UNIFORM_FLOOR = 0.25
+
 
 class Agent(ABC):
     """Abstract base class for all ManaMind agents."""
@@ -173,8 +177,12 @@ class MCTSNode:
         child_node = MCTSNode(new_state, action, self)
 
         # Carry over the policy prior for this action, if one was set.
+        # The default is uniform rather than zero: a zero prior removes a
+        # child from PUCT exploration permanently.
         if self.action_priors:
-            child_node.prior_prob = self.action_priors.get(id(action), 0.0)
+            child_node.prior_prob = self.action_priors.get(
+                id(action), 1.0 / max(len(self.action_priors), 1)
+            )
 
         self.children.append((action, child_node))
         return child_node
@@ -264,10 +272,12 @@ class MCTSAgent(Agent):
             # Simulation phase - evaluate position
             value = self._evaluate_position(node.game_state)
 
-            # Backpropagation phase - update statistics
-            for node in reversed(path):
-                node.backup(value)
-                value = -value  # Flip for opponent
+            # Backpropagation phase - update statistics.
+            # backup() walks to the root itself, flipping the sign at each
+            # level, so it is called once on the leaf. Calling it for every
+            # node on the path would increment each ancestor once per
+            # descendant, inflating visit counts by the path depth.
+            path[-1].backup(value)
 
             simulation_count += 1
 
@@ -359,21 +369,44 @@ class MCTSAgent(Agent):
         # several legal actions can share one index; they split that mass
         # evenly rather than each claiming it.
         width = probs.numel()
-        raw: List[float] = []
+        indices: List[Optional[int]] = []
         for action in actions:
             index = self.action_space.action_to_id.get(
                 action.action_type.value
             )
             if index is None or index >= width:
+                indices.append(None)
+            else:
+                indices.append(index)
+
+        shared: Dict[int, int] = {}
+        for index in indices:
+            if index is not None:
+                shared[index] = shared.get(index, 0) + 1
+
+        raw: List[float] = []
+        for index in indices:
+            if index is None:
                 raw.append(0.0)
             else:
-                raw.append(float(probs[index]))
+                raw.append(float(probs[index]) / shared[index])
 
         total = sum(raw)
+        count = len(actions)
         if total <= 0:
             return {}
 
-        return {position: value / total for position, value in enumerate(raw)}
+        # Mix in a uniform floor. A prior of exactly zero is absorbing
+        # under PUCT: the exploration term vanishes, so once such a child
+        # has been visited and scored badly it can never be revisited, and
+        # one action with all the mass takes every remaining simulation.
+        # Today's action space gives whole classes of legal moves a zero
+        # prior, so the floor is what keeps the search looking at them.
+        floor = PRIOR_UNIFORM_FLOOR
+        return {
+            position: (1.0 - floor) * (value / total) + floor / count
+            for position, value in enumerate(raw)
+        }
 
     def _node_actions(self, node: MCTSNode) -> List[Action]:
         """All legal actions at a node, expanded or not, in a stable order."""
@@ -398,14 +431,15 @@ class MCTSAgent(Agent):
             uniform = 1.0 / len(actions)
             priors = {position: uniform for position in range(len(actions))}
 
+        fallback = 1.0 / len(actions)
         node.action_priors = {
-            id(action): priors.get(position, 0.0)
+            id(action): priors.get(position, fallback)
             for position, action in enumerate(actions)
         }
 
         # Children that already exist get their prior now.
         for action, child in node.children:
-            child.prior_prob = node.action_priors.get(id(action), 0.0)
+            child.prior_prob = node.action_priors.get(id(action), fallback)
 
     def _evaluate_position(self, game_state: GameState) -> float:
         """Evaluate a game position.
