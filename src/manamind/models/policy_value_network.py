@@ -114,6 +114,22 @@ class PolicyValueNetwork(nn.Module):
                 nn.init.constant_(module.bias, 0)
                 nn.init.constant_(module.weight, 1.0)
 
+        # The value head ends in tanh, whose gradient vanishes near the
+        # asymptotes. He initialisation on the last linear layer leaves the
+        # pre-activation well outside tanh's useful range, so an untrained
+        # head returns the same saturated value for every position: search
+        # then sees no difference between moves and cannot rank them, and
+        # training barely moves it. Start the head small so it predicts
+        # roughly zero and has real gradient to learn with.
+        final_value_layer = None
+        for module in self.value_head:
+            if isinstance(module, nn.Linear):
+                final_value_layer = module
+        if final_value_layer is not None:
+            nn.init.normal_(final_value_layer.weight, mean=0.0, std=0.01)
+            if final_value_layer.bias is not None:
+                nn.init.constant_(final_value_layer.bias, 0)
+
     def forward(self, game_state: Any) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through the network.
 
