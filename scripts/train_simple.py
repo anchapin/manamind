@@ -322,7 +322,7 @@ def train(
         network.load_state_dict(payload["network"])
         optimizer.load_state_dict(payload["optimizer"])
         state = payload["resume"]
-        buffer = list(state["buffer"])
+        buffer = [Example(*item) for item in state["buffer"]]
         results = [IterationResult(**r) for r in state["results"]]
         baseline = state["baseline"]
         restore_rng_state(state["rng"])
@@ -405,7 +405,8 @@ def train(
                 action_space_size=action_space_size,
                 result=result,
                 resume_state={
-                    "buffer": buffer,
+                    # plain tuples, so other scripts can load the file
+                    "buffer": [(e.state, e.policy, e.value) for e in buffer],
                     "results": [r.as_dict() for r in results],
                     "baseline": baseline,
                     "rng": rng_state(),
