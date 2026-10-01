@@ -304,7 +304,7 @@ class PolicyValueLoss(nn.Module):
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
-            "l2_loss": float(l2_loss),
+            "l2_loss": l2_loss.item(),
         }
 
         return total_loss, loss_dict
