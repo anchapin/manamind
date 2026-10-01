@@ -24,11 +24,13 @@ import torch
 
 from manamind.core.agent import MCTSAgent, RandomAgent
 from manamind.core.game_state import GameState
+from manamind.core.observation import observe
 from manamind.models.policy_value_network import (
     PolicyValueLoss,
     PolicyValueNetwork,
 )
 from manamind.rules.simple import (
+    build_simple_deck,
     build_simple_network,
     create_simple_game_start,
 )
@@ -36,6 +38,13 @@ from manamind.rules.simple import (
 # Self-play only; evaluation searches without noise.
 ROOT_DIRICHLET_ALPHA = 0.3
 SELF_PLAY_TEMPERATURE = 1.0
+
+
+def known_deck_lists() -> Dict[int, List[object]]:
+    """Both seats play the fixed simple-mode list, so both lists are known."""
+    return {0: build_simple_deck(), 1: build_simple_deck()}
+
+
 MAX_STEPS = 400
 
 
@@ -83,11 +92,13 @@ def play_game(
         if state.is_game_over():
             break
         actor = agents[state.priority_player]
-        action = actor.select_action(state)
+        # Agents see only their own observation; the full state stays here.
+        seen = observe(state, state.priority_player)
+        action = actor.select_action(seen)
         if record and isinstance(actor, MCTSAgent):
             history.append(
                 (
-                    state,
+                    seen,
                     actor.last_search_policy(
                         actor.policy_network.action_space_size
                     ),
@@ -125,6 +136,7 @@ def evaluate(
                 value_network=network,
                 simulations=simulations,
                 simulation_time=30.0,
+                deck_lists=known_deck_lists(),
             ),
             1 - seat: RandomAgent(1 - seat, seed=seed + game),
         }
@@ -218,6 +230,7 @@ def train(
                     value_network=network,
                     simulations=simulations,
                     simulation_time=30.0,
+                    deck_lists=known_deck_lists(),
                     root_dirichlet_alpha=ROOT_DIRICHLET_ALPHA,
                     temperature=SELF_PLAY_TEMPERATURE,
                 )

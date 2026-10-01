@@ -10,7 +10,7 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -18,6 +18,7 @@ from numpy import ndarray
 
 from manamind.core.action import Action, ActionSpace, ActionType
 from manamind.core.game_state import GameState
+from manamind.core.observation import contains_hidden, determinize
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ class MCTSAgent(Agent):
         root_dirichlet_alpha: Optional[float] = None,
         root_noise_fraction: float = 0.25,
         temperature: float = 0.0,
+        deck_lists: Optional[Dict[int, Sequence[Any]]] = None,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -228,6 +230,9 @@ class MCTSAgent(Agent):
             temperature: 0 plays the most-visited move. Above 0, sample the
                 move with probability proportional to visits ** (1 / T),
                 as AlphaZero does in self-play so games stay varied.
+            deck_lists: Known deck list per player. When the agent is handed
+                an observation with hidden cards, it searches one world
+                sampled consistently with it (see core.observation).
         """
         super().__init__(player_id)
         self.policy_network = policy_network
@@ -242,6 +247,7 @@ class MCTSAgent(Agent):
         self.root_dirichlet_alpha = root_dirichlet_alpha
         self.root_noise_fraction = root_noise_fraction
         self.temperature = temperature
+        self.deck_lists = deck_lists
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -253,6 +259,11 @@ class MCTSAgent(Agent):
         Returns:
             The selected action
         """
+        # Agents are handed an observation, not the full state. Search needs
+        # a complete state to simulate, so sample one consistent world.
+        if contains_hidden(game_state):
+            game_state = determinize(game_state, self.deck_lists)
+
         root = MCTSNode(game_state)
         self._last_root = root
 
