@@ -520,9 +520,11 @@ class MCTSAgent(Agent):
         if not math.isfinite(scalar):
             return self._heuristic_evaluation(game_state)
 
-        # The value head is trained from the active player's point of view;
-        # flip it when this agent is not the one to act.
-        if game_state.active_player != self.player_id:
+        # Self-play labels each position from the point of view of the
+        # player holding priority (the one choosing the move), so read the
+        # value head the same way. Using active_player here disagreed with
+        # the labels whenever the defender acts, e.g. every block decision.
+        if game_state.priority_player != self.player_id:
             scalar = -scalar
 
         return max(-1.0, min(1.0, scalar))

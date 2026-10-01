@@ -43,10 +43,13 @@ def test_value_network_is_consulted() -> None:
 
 
 def test_value_is_flipped_for_the_opponent() -> None:
-    """The value head speaks for the active player, not for us."""
+    """The value head speaks for the player holding priority, not for us."""
     network = FakeNetwork(value=0.5)
     state = create_standard_game_start()
-    state.active_player = 0
+    state.priority_player = 0
+
+    ours = MCTSAgent(0, value_network=network)._evaluate_with_network(state)
+    assert ours == 0.5
 
     ours = MCTSAgent(0, value_network=network)._evaluate_with_network(state)
     theirs = MCTSAgent(1, value_network=network)._evaluate_with_network(state)
@@ -141,3 +144,14 @@ def test_search_policy_is_uniform_before_any_search() -> None:
     policy = agent.last_search_policy(10)
 
     assert np.allclose(policy, 0.1)
+
+
+def test_value_perspective_follows_priority_not_turn() -> None:
+    """A defender choosing blocks reads the value as its own."""
+    network = FakeNetwork(value=0.5)
+    state = create_standard_game_start()
+    state.active_player = 0
+    state.priority_player = 1
+
+    defender = MCTSAgent(1, value_network=network)
+    assert defender._evaluate_with_network(state) == 0.5
