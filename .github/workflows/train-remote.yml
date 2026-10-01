@@ -33,6 +33,10 @@ jobs:
     env:
       RUN_NAME: ${{ github.event.inputs.run_name }}
       TRAIN_ARGS: ${{ github.event.inputs.args }}
+      # Several runner instances can share one PC; keep each job from
+      # grabbing every core for torch's thread pool.
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,9 +46,9 @@ jobs:
         run: |
           [[ "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run_name"; exit 1; }
 
-      - name: Python environment (cached in ~/manamind-venv)
+      - name: Python environment (one cached venv per runner instance)
         run: |
-          VENV="$HOME/manamind-venv"
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
           [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
           "$VENV/bin/pip" install -q --upgrade pip
           "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
