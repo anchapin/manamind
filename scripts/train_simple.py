@@ -33,6 +33,9 @@ from manamind.rules.simple import (
     create_simple_game_start,
 )
 
+# Self-play only; evaluation searches without noise.
+ROOT_DIRICHLET_ALPHA = 0.3
+SELF_PLAY_TEMPERATURE = 1.0
 MAX_STEPS = 400
 
 
@@ -215,6 +218,8 @@ def train(
                     value_network=network,
                     simulations=simulations,
                     simulation_time=30.0,
+                    root_dirichlet_alpha=ROOT_DIRICHLET_ALPHA,
+                    temperature=SELF_PLAY_TEMPERATURE,
                 )
                 for pid in (0, 1)
             }

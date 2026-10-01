@@ -155,3 +155,24 @@ def test_value_perspective_follows_priority_not_turn() -> None:
 
     defender = MCTSAgent(1, value_network=network)
     assert defender._evaluate_with_network(state) == 0.5
+
+
+def test_root_noise_reshapes_priors_but_keeps_them_a_distribution() -> None:
+    state = create_standard_game_start()
+    agent = MCTSAgent(0, simulations=1, root_dirichlet_alpha=0.3)
+    root = MCTSNode(state)
+    root.action_priors = {1: 0.9, 2: 0.1}
+    agent._add_root_noise(root)
+    assert abs(sum(root.action_priors.values()) - 1.0) < 1e-9
+    assert root.action_priors[2] >= 0.075  # at least (1 - 0.25) * 0.1
+
+
+def test_no_root_noise_by_default() -> None:
+    root = MCTSNode(create_standard_game_start())
+    root.action_priors = {1: 0.9, 2: 0.1}
+    MCTSAgent(0)._add_root_noise(root)
+    assert root.action_priors == {1: 0.9, 2: 0.1}
+
+
+def test_temperature_zero_is_the_default_and_deterministic() -> None:
+    assert MCTSAgent(0).temperature == 0.0

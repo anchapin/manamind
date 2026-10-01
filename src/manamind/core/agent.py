@@ -208,6 +208,9 @@ class MCTSAgent(Agent):
         simulations: int = 1000,
         simulation_time: float = 1.0,
         c_puct: float = 1.0,
+        root_dirichlet_alpha: Optional[float] = None,
+        root_noise_fraction: float = 0.25,
+        temperature: float = 0.0,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -218,6 +221,13 @@ class MCTSAgent(Agent):
             simulations: Number of MCTS simulations per move
             simulation_time: Time limit for MCTS (seconds)
             c_puct: Exploration parameter for PUCT algorithm
+            root_dirichlet_alpha: When set, mix Dirichlet(alpha) noise into
+                the root priors (AlphaZero self-play exploration). Leave
+                None for evaluation and real play.
+            root_noise_fraction: Weight of that noise in the mixed prior.
+            temperature: 0 plays the most-visited move. Above 0, sample the
+                move with probability proportional to visits ** (1 / T),
+                as AlphaZero does in self-play so games stay varied.
         """
         super().__init__(player_id)
         self.policy_network = policy_network
@@ -229,6 +239,9 @@ class MCTSAgent(Agent):
         self.simulations = simulations
         self.simulation_time = simulation_time
         self.c_puct = c_puct
+        self.root_dirichlet_alpha = root_dirichlet_alpha
+        self.root_noise_fraction = root_noise_fraction
+        self.temperature = temperature
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -246,6 +259,7 @@ class MCTSAgent(Agent):
         # Priors shape which moves PUCT explores first. Set them even
         # without a network: a uniform prior keeps selection well defined.
         self._set_prior_probabilities(root)
+        self._add_root_noise(root)
 
         start_time = time.time()
         simulation_count = 0
@@ -295,6 +309,16 @@ class MCTSAgent(Agent):
         # then the higher prior. Breaking ties by list order instead always
         # picked the first-expanded child, which is pass_priority because
         # legal actions list it last and expand() pops from the end.
+        if self.temperature > 0 and root.children:
+            weights = [
+                child.visits ** (1.0 / self.temperature)
+                for _, child in root.children
+            ]
+            if sum(weights) > 0:
+                return random.choices(
+                    [action for action, _ in root.children], weights=weights
+                )[0]
+
         best_child = max(
             (child for _, child in root.children),
             key=lambda child: (
@@ -467,6 +491,27 @@ class MCTSAgent(Agent):
         # Children that already exist get their prior now.
         for action, child in node.children:
             child.prior_prob = node.action_priors.get(id(action), fallback)
+
+    def _add_root_noise(self, root: MCTSNode) -> None:
+        """Mix Dirichlet noise into the root priors for self-play.
+
+        Without it an untrained policy head is self-reinforcing: search
+        follows the prior, the visit counts it produces become the training
+        target, and the network learns its own starting bias. With the
+        simple-mode network that bias was pass_priority, so both self-play
+        seats passed every turn until someone drew from an empty library.
+        """
+        alpha = self.root_dirichlet_alpha
+        if not alpha or len(root.action_priors) < 2:
+            return
+        keys = list(root.action_priors)
+        draws = [random.gammavariate(alpha, 1.0) for _ in keys]
+        total = sum(draws) or 1.0
+        frac = self.root_noise_fraction
+        for key, draw in zip(keys, draws):
+            root.action_priors[key] = (1.0 - frac) * root.action_priors[
+                key
+            ] + frac * (draw / total)
 
     def _evaluate_position(self, game_state: GameState) -> float:
         """Evaluate a game position.
