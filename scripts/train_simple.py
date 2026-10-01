@@ -118,6 +118,7 @@ def evaluate(
     simulations: int,
     seed: int,
     fpu_reduction: Optional[float] = None,
+    search: str = "puct",
 ) -> float:
     """Win rate against RandomAgent, seats alternating.
 
@@ -135,6 +136,7 @@ def evaluate(
                 simulations=simulations,
                 simulation_time=30.0,
                 fpu_reduction=fpu_reduction,
+                search=search,
             ),
             1 - seat: RandomAgent(1 - seat, seed=seed + game),
         }
@@ -295,6 +297,7 @@ def train(
     checkpoint_dir: Optional[Path] = None,
     fpu_reduction: Optional[float] = None,
     resume: bool = False,
+    search: str = "puct",
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -337,6 +340,7 @@ def train(
             simulations=simulations,
             seed=seed * 7919,
             fpu_reduction=fpu_reduction,
+            search=search,
         )
         print(
             f"iter  0  win_rate {baseline:.3f}  (untrained baseline)",
@@ -356,6 +360,8 @@ def train(
                     root_dirichlet_alpha=ROOT_DIRICHLET_ALPHA,
                     temperature=SELF_PLAY_TEMPERATURE,
                     fpu_reduction=fpu_reduction,
+                    search=search,
+                    gumbel_noise=True,
                 )
                 for pid in (0, 1)
             }
@@ -375,6 +381,7 @@ def train(
             simulations=simulations,
             seed=seed * 7919 + iteration,
             fpu_reduction=fpu_reduction,
+            search=search,
         )
 
         result = IterationResult(
@@ -455,6 +462,12 @@ def main() -> None:
         "of visited siblings minus this; omit for the old flat 0",
     )
     parser.add_argument(
+        "--search",
+        choices=("puct", "gumbel"),
+        default="puct",
+        help="root search: AlphaZero PUCT (default) or Gumbel AlphaZero",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -472,6 +485,7 @@ def main() -> None:
         checkpoint_dir=args.checkpoint_dir,
         fpu_reduction=args.fpu_reduction,
         resume=args.resume,
+        search=args.search,
     )
 
 
