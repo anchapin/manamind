@@ -273,11 +273,14 @@ class MCTSAgent(Agent):
             value = self._evaluate_position(node.game_state)
 
             # Backpropagation phase - update statistics.
-            # backup() walks to the root itself, flipping the sign at each
-            # level, so it is called once on the leaf. Calling it for every
-            # node on the path would increment each ancestor once per
-            # descendant, inflating visit counts by the path depth.
-            path[-1].backup(value)
+            # The leaf value is from this agent's perspective. Each node
+            # stores value from the perspective of the player who chose the
+            # action leading to it, so selection can maximise Q at every
+            # level. Flipping the sign once per tree level instead assumes
+            # players strictly alternate, which MTG does not: one player
+            # often takes several actions in a row (land, spell, spell),
+            # and per-level flipping scrambles the sign by depth.
+            self._backup_path(path, value)
 
             simulation_count += 1
 
@@ -301,6 +304,21 @@ class MCTSAgent(Agent):
             if legal_actions
             else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
+
+    def _backup_path(self, path: List[MCTSNode], value: float) -> None:
+        """Propagate a leaf value up the path with per-node perspective.
+
+        Args:
+            path: Nodes from root to leaf, in order
+            value: Leaf evaluation from this agent's perspective
+        """
+        for node in path:
+            node.visits += 1
+            if node.parent is None:
+                node.total_value += value
+                continue
+            mover = node.parent.game_state.priority_player
+            node.total_value += value if mover == self.player_id else -value
 
     def last_search_policy(self, width: int) -> ndarray[Any, Any]:
         """Visit-count distribution from the most recent search.
