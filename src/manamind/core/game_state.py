@@ -208,6 +208,12 @@ class GameState:
     priority_player: int = 0  # Which player has priority (0 or 1)
     active_player: int = 0  # Whose turn it is
 
+    # Which rules engine governs this state. "standard" is the full game;
+    # "simple" is the restricted subset in manamind.rules.simple used to
+    # validate the training loop. The mode travels with the state through
+    # copies, so search and self-play need no extra plumbing.
+    game_mode: str = "standard"
+
     # Stack (spells and abilities waiting to resolve)
     stack: List[Dict[str, Any]] = field(default_factory=list)
 

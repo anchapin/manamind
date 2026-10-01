@@ -5,7 +5,7 @@ both policy (action prediction) and value (position evaluation) estimation
 in a single network, similar to AlphaZero.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -34,6 +34,7 @@ class PolicyValueNetwork(nn.Module):
         action_space_size: int = 10000,  # Maximum number of possible actions
         dropout_rate: float = 0.1,
         use_attention: bool = True,
+        state_encoder: Optional[nn.Module] = None,
     ):
         """Initialize the policy-value network.
 
@@ -45,6 +46,9 @@ class PolicyValueNetwork(nn.Module):
             action_space_size: Size of the action space
             dropout_rate: Dropout rate for regularization
             use_attention: Whether to use attention mechanisms
+            state_encoder: Module turning a GameState into a state_dim
+                vector. Defaults to the full GameStateEncoder; the simple
+                game mode supplies a much cheaper one.
         """
         super().__init__()
 
@@ -54,7 +58,9 @@ class PolicyValueNetwork(nn.Module):
         self.use_attention = use_attention
 
         # Game state encoder
-        self.state_encoder = GameStateEncoder(output_dim=state_dim)
+        self.state_encoder = state_encoder or GameStateEncoder(
+            output_dim=state_dim
+        )
 
         # Input projection
         self.input_projection = nn.Linear(state_dim, hidden_dim)

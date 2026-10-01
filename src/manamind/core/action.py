@@ -156,6 +156,10 @@ class Action:
         Raises:
             ValueError: If the action is not valid
         """
+        rules = _rules_for(game_state)
+        if rules is not None:
+            return rules.apply(game_state, self)
+
         if not self.is_valid(game_state):
             raise ValueError(f"Invalid action: {self}")
 
@@ -166,6 +170,22 @@ class Action:
         raise NotImplementedError(
             f"Execution not implemented for {self.action_type}"
         )
+
+
+def _rules_for(game_state: GameState) -> Any:
+    """Return the alternate rules engine governing this state, if any.
+
+    Imported lazily: the rules modules import Action and ActionType from
+    here, so a module-level import would be circular.
+    """
+    mode = getattr(game_state, "game_mode", "standard")
+    if mode == "standard":
+        return None
+    if mode == "simple":
+        from manamind.rules.simple import SimpleRules
+
+        return SimpleRules
+    raise ValueError(f"Unknown game mode: {mode}")
 
 
 class ActionValidator(ABC):
@@ -398,6 +418,10 @@ class ActionSpace:
         Returns:
             List of all legal actions the current priority player can take
         """
+        rules = _rules_for(game_state)
+        if rules is not None:
+            return rules.legal_actions(game_state)
+
         legal_actions = []
         current_player_id = game_state.priority_player
         current_player = game_state.players[current_player_id]
