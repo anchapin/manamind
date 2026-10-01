@@ -290,9 +290,18 @@ class MCTSAgent(Agent):
             legal_actions = self.action_space.get_legal_actions(game_state)
             return random.choice(legal_actions)
 
+        # Most visits wins; ties (common at low simulation counts, where
+        # PUCT spreads visits almost evenly) go to the better mean value,
+        # then the higher prior. Breaking ties by list order instead always
+        # picked the first-expanded child, which is pass_priority because
+        # legal actions list it last and expand() pops from the end.
         best_child = max(
             (child for _, child in root.children),
-            key=lambda child: child.visits,
+            key=lambda child: (
+                child.visits,
+                child.total_value / child.visits if child.visits else 0.0,
+                child.prior_prob,
+            ),
         )
         if best_child.action:
             return best_child.action
@@ -527,13 +536,27 @@ class MCTSAgent(Agent):
         Returns:
             Heuristic value (-1 to 1)
         """
-        # Simple life difference heuristic
-        my_life = game_state.players[self.player_id].life
-        opp_life = game_state.players[1 - self.player_id].life
 
-        life_diff = my_life - opp_life
-        # Normalize to roughly [-1, 1]
-        return max(-1.0, min(1.0, life_diff / 20.0))
+        # Life alone is flat for the first several turns, so every early
+        # move scored 0.0 and search had nothing to rank. Count material on
+        # the battlefield and lands in play too.
+        def material(player: Any) -> float:
+            total = 0.0
+            for card in player.battlefield.cards:
+                if card.is_creature():
+                    total += (card.current_power() or 0) + 0.5 * (
+                        card.current_toughness() or 0
+                    )
+                elif card.is_land():
+                    total += 0.5
+            return total
+
+        me = game_state.players[self.player_id]
+        opp = game_state.players[1 - self.player_id]
+        score = (me.life - opp.life) / 20.0 + (
+            material(me) - material(opp)
+        ) / 10.0
+        return math.tanh(score)
 
     def update_from_game(
         self, game_history: List[Tuple[GameState, Action, float]]
