@@ -232,6 +232,11 @@ class MCTSAgent(Agent):
         root_noise_fraction: float = 0.25,
         temperature: float = 0.0,
         fpu_reduction: Optional[float] = None,
+        search: str = "puct",
+        gumbel_k: int = 16,
+        gumbel_noise: bool = False,
+        c_visit: float = 50.0,
+        c_scale: float = 1.0,
     ) -> None:
         """Initialize MCTS agent.
 
@@ -249,7 +254,20 @@ class MCTSAgent(Agent):
             temperature: 0 plays the most-visited move. Above 0, sample the
                 move with probability proportional to visits ** (1 / T),
                 as AlphaZero does in self-play so games stay varied.
+            fpu_reduction: First-play urgency for unvisited children.
+            search: "puct" (AlphaZero) or "gumbel" (Gumbel AlphaZero root
+                search: Gumbel-Top-k plus sequential halving, with a
+                completed-Q policy target). Gumbel ignores Dirichlet noise
+                and temperature; its exploration is the Gumbel noise.
+            gumbel_k: Actions considered at the root by Gumbel search.
+            gumbel_noise: Add Gumbel noise at the root. On for self-play,
+                off for evaluation, which then picks deterministically.
+            c_visit, c_scale: The sigma(q) scaling from Danihelka et al.
+                (2022): sigma(q) = (c_visit + max_b N(b)) * c_scale * q,
+                with q rescaled to [0, 1].
         """
+        if search not in ("puct", "gumbel"):
+            raise ValueError(f"unknown search {search!r}")
         super().__init__(player_id)
         self.policy_network = policy_network
         self.value_network = value_network
@@ -265,6 +283,14 @@ class MCTSAgent(Agent):
         self.temperature = temperature
         self.fpu_reduction = fpu_reduction
         self._last_forced: Optional[Action] = None
+        self.search = search
+        self.gumbel_k = gumbel_k
+        self.gumbel_noise = gumbel_noise
+        self.c_visit = c_visit
+        self.c_scale = c_scale
+        # (action, probability) pairs from the last Gumbel search: the
+        # completed-Q policy target. None after a PUCT search.
+        self._last_gumbel_policy: Optional[List[Tuple[Action, float]]] = None
         self.action_space = ActionSpace()
 
     def select_action(self, game_state: GameState) -> Action:
@@ -280,12 +306,16 @@ class MCTSAgent(Agent):
         # anyway wastes the budget, and recording its trivial visit
         # distribution floods the policy target with that action: about
         # half of all simple-mode decisions are forced passes.
+        self._last_gumbel_policy = None
         legal = self.action_space.get_legal_actions(game_state)
         if len(legal) == 1:
             self._last_root = None
             self._last_forced = legal[0]
             return legal[0]
         self._last_forced = None
+
+        if self.search == "gumbel":
+            return self._gumbel_select(game_state)
 
         root = MCTSNode(game_state)
         root.fpu_reduction = self.fpu_reduction
@@ -373,6 +403,123 @@ class MCTSAgent(Agent):
             else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
 
+    def _simulate_from(self, root: MCTSNode, child: MCTSNode) -> None:
+        """Run one simulation that starts by taking ``child`` at the root."""
+        node = child
+        path = [root, child]
+        while (
+            not node.is_terminal()
+            and node.is_fully_expanded()
+            and node.children
+        ):
+            node = node.select_child()
+            path.append(node)
+        if not node.is_terminal() and not node.is_fully_expanded():
+            node = node.expand()
+            path.append(node)
+        value = self._evaluate_position(node.game_state)
+        self._backup_path(path, value)
+
+    def _gumbel_select(self, game_state: GameState) -> Action:
+        """Gumbel AlphaZero root search (Danihelka et al., ICLR 2022).
+
+        Sample the top-k root actions by logits + Gumbel noise, split the
+        simulation budget over them with sequential halving, and play the
+        survivor with the best g + logits + sigma(q). The policy target is
+        softmax(logits + sigma(completed q)): every legal action gets a
+        value (unvisited ones the mixed estimate v_mix), so the target can
+        move away from the prior even with a handful of simulations. Visit
+        counts at that budget mostly copy the prior, which is how earlier
+        runs collapsed onto passing.
+        """
+        root = MCTSNode(game_state)
+        root.fpu_reduction = self.fpu_reduction
+        self._last_root = root
+        self._set_prior_probabilities(root)
+        while root.untried_actions:
+            root.expand()
+        children = [child for _, child in root.children]
+        count = len(children)
+
+        priors = np.array(
+            [max(child.prior_prob, 1e-12) for child in children], dtype=float
+        )
+        priors /= priors.sum()
+        logits = np.log(priors)
+        if self.gumbel_noise:
+            uniform = np.array(
+                [max(random.random(), 1e-12) for _ in children], dtype=float
+            )
+            gumbel = -np.log(-np.log(uniform))
+        else:
+            gumbel = np.zeros(count)
+
+        # Child values are stored from the root mover's perspective; the
+        # leaf evaluator speaks for this agent.
+        sign = 1.0 if game_state.priority_player == self.player_id else -1.0
+        root_value = sign * self._evaluate_position(game_state)
+
+        def completed_q() -> np.ndarray:
+            visits = np.array([c.visits for c in children], dtype=float)
+            q = np.array(
+                [
+                    c.total_value / c.visits if c.visits else 0.0
+                    for c in children
+                ]
+            )
+            visited = visits > 0
+            if visited.any():
+                weight = priors[visited].sum()
+                mixed = (
+                    root_value
+                    + visits.sum()
+                    / weight
+                    * float((priors * q)[visited].sum())
+                ) / (1.0 + visits.sum())
+            else:
+                mixed = root_value
+            completed = np.where(visited, q, mixed)
+            return np.clip((completed + 1.0) / 2.0, 0.0, 1.0)
+
+        def sigma(q: np.ndarray) -> np.ndarray:
+            max_visits = max((c.visits for c in children), default=0)
+            return (self.c_visit + max_visits) * self.c_scale * q
+
+        considered = min(max(self.gumbel_k, 1), count)
+        remaining = list(np.argsort(-(gumbel + logits))[:considered])
+        phases = (
+            max(1, math.ceil(math.log2(considered))) if considered > 1 else 1
+        )
+        budget = max(self.simulations, 0)
+        used = 0
+        start = time.time()
+
+        while used < budget and time.time() - start < self.simulation_time:
+            per_action = max(1, budget // (phases * len(remaining)))
+            for index in remaining:
+                for _ in range(per_action):
+                    if used >= budget:
+                        break
+                    self._simulate_from(root, children[index])
+                    used += 1
+            if len(remaining) == 1:
+                break
+            score = gumbel + logits + sigma(completed_q())
+            remaining = sorted(remaining, key=lambda i: -score[i])[
+                : max(1, len(remaining) // 2)
+            ]
+
+        score = gumbel + logits + sigma(completed_q())
+        best = max(remaining, key=lambda i: score[i])
+
+        target = logits + sigma(completed_q())
+        target = np.exp(target - target.max())
+        target /= target.sum()
+        self._last_gumbel_policy = [
+            (action, float(p)) for (action, _), p in zip(root.children, target)
+        ]
+        return root.children[best][0]
+
     def _backup_path(self, path: List[MCTSNode], value: float) -> None:
         """Propagate a leaf value up the path with per-node perspective.
 
@@ -421,6 +568,20 @@ class MCTSAgent(Agent):
                 return policy
 
         if root is None or not root.children:
+            policy[:] = 1.0 / width
+            return policy
+
+        gumbel = getattr(self, "_last_gumbel_policy", None)
+        if gumbel:
+            for action, probability in gumbel:
+                index = self.action_space.action_to_id.get(
+                    action.action_type.value
+                )
+                if index is not None and index < width:
+                    policy[index] += probability
+            total = policy.sum()
+            if total > 0:
+                return policy / total
             policy[:] = 1.0 / width
             return policy
 
