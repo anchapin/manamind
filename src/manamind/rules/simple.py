@@ -494,7 +494,8 @@ class SimpleStateEncoder(nn.Module):
         return torch.tensor(values, dtype=torch.float32)
 
     def forward(self, game_state: GameState) -> torch.Tensor:
-        return self.projection(self.features(game_state))
+        out: torch.Tensor = self.projection(self.features(game_state))
+        return out
 
 
 def build_simple_network(

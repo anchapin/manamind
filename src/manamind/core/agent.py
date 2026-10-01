@@ -10,7 +10,7 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -115,6 +115,13 @@ class MCTSNode:
         # child created later by expand() inherits the right prior.
         self.action_priors: Dict[int, float] = {}
 
+        # First-play urgency. None keeps the old behaviour (an unvisited
+        # child scores 0 for exploitation). A float means an unvisited child
+        # starts at the mean value of its already-visited siblings minus this
+        # reduction, so the search judges an untried move against what this
+        # position is actually worth instead of against a flat 0.
+        self.fpu_reduction: Optional[float] = None
+
         # Untried actions
         action_space = ActionSpace()
         self.untried_actions = action_space.get_legal_actions(game_state)
@@ -142,11 +149,10 @@ class MCTSNode:
         Returns:
             Selection score; higher is more worth searching
         """
-        exploitation = (
-            child_node.total_value / child_node.visits
-            if child_node.visits > 0
-            else 0.0
-        )
+        if child_node.visits > 0:
+            exploitation = child_node.total_value / child_node.visits
+        else:
+            exploitation = self.first_play_value()
 
         # PUCT exploration: prior * sqrt(parent visits) / (1 + child visits).
         # Unlike UCB1 this is finite for an unvisited child, so the prior
@@ -160,6 +166,19 @@ class MCTSNode:
         )
 
         return exploitation + exploration
+
+    def first_play_value(self) -> float:
+        """Exploitation score for a child that has not been visited yet."""
+        if self.fpu_reduction is None:
+            return 0.0
+        visited = [
+            child.total_value / child.visits
+            for _, child in self.children
+            if child.visits > 0
+        ]
+        if not visited:
+            return 0.0
+        return sum(visited) / len(visited) - self.fpu_reduction
 
     def select_child(self) -> MCTSNode:
         """Select the child with the highest UCB1 score."""
@@ -176,6 +195,7 @@ class MCTSNode:
         action = self.untried_actions.pop()
         new_state = action.execute(self.game_state)
         child_node = MCTSNode(new_state, action, self)
+        child_node.fpu_reduction = self.fpu_reduction
 
         # Carry over the policy prior for this action, if one was set.
         # The default is uniform rather than zero: a zero prior removes a
@@ -212,6 +232,12 @@ class MCTSAgent(Agent):
         root_dirichlet_alpha: Optional[float] = None,
         root_noise_fraction: float = 0.25,
         temperature: float = 0.0,
+        fpu_reduction: Optional[float] = None,
+        search: str = "puct",
+        gumbel_k: int = 16,
+        gumbel_noise: bool = False,
+        c_visit: float = 50.0,
+        c_scale: float = 1.0,
         deck_lists: Optional[Dict[int, Sequence[Any]]] = None,
     ) -> None:
         """Initialize MCTS agent.
@@ -230,10 +256,23 @@ class MCTSAgent(Agent):
             temperature: 0 plays the most-visited move. Above 0, sample the
                 move with probability proportional to visits ** (1 / T),
                 as AlphaZero does in self-play so games stay varied.
+            fpu_reduction: First-play urgency for unvisited children.
+            search: "puct" (AlphaZero) or "gumbel" (Gumbel AlphaZero root
+                search: Gumbel-Top-k plus sequential halving, with a
+                completed-Q policy target). Gumbel ignores Dirichlet noise
+                and temperature; its exploration is the Gumbel noise.
+            gumbel_k: Actions considered at the root by Gumbel search.
+            gumbel_noise: Add Gumbel noise at the root. On for self-play,
+                off for evaluation, which then picks deterministically.
+            c_visit, c_scale: The sigma(q) scaling from Danihelka et al.
+                (2022): sigma(q) = (c_visit + max_b N(b)) * c_scale * q,
+                with q rescaled to [0, 1].
             deck_lists: Known deck list per player. When the agent is handed
                 an observation with hidden cards, it searches one world
                 sampled consistently with it (see core.observation).
         """
+        if search not in ("puct", "gumbel"):
+            raise ValueError(f"unknown search {search!r}")
         super().__init__(player_id)
         self.policy_network = policy_network
         self.value_network = value_network
@@ -247,6 +286,16 @@ class MCTSAgent(Agent):
         self.root_dirichlet_alpha = root_dirichlet_alpha
         self.root_noise_fraction = root_noise_fraction
         self.temperature = temperature
+        self.fpu_reduction = fpu_reduction
+        self._last_forced: Optional[Action] = None
+        self.search = search
+        self.gumbel_k = gumbel_k
+        self.gumbel_noise = gumbel_noise
+        self.c_visit = c_visit
+        self.c_scale = c_scale
+        # (action, probability) pairs from the last Gumbel search: the
+        # completed-Q policy target. None after a PUCT search.
+        self._last_gumbel_policy: Optional[List[Tuple[Action, float]]] = None
         self.deck_lists = deck_lists
         self.action_space = ActionSpace()
 
@@ -259,12 +308,27 @@ class MCTSAgent(Agent):
         Returns:
             The selected action
         """
+        # A forced move (one legal action) needs no search. Searching it
+        # anyway wastes the budget, and recording its trivial visit
+        # distribution floods the policy target with that action: about
+        # half of all simple-mode decisions are forced passes.
+        self._last_gumbel_policy = None
+        legal = self.action_space.get_legal_actions(game_state)
+        if len(legal) == 1:
+            self._last_root = None
+            self._last_forced = legal[0]
+            return legal[0]
+        self._last_forced = None
+
+        if self.search == "gumbel":
+            return self._gumbel_select(game_state)
         # Agents are handed an observation, not the full state. Search needs
         # a complete state to simulate, so sample one consistent world.
         if contains_hidden(game_state):
             game_state = determinize(game_state, self.deck_lists)
 
         root = MCTSNode(game_state)
+        root.fpu_reduction = self.fpu_reduction
         self._last_root = root
 
         # Priors shape which moves PUCT explores first. Set them even
@@ -349,6 +413,123 @@ class MCTSAgent(Agent):
             else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
 
+    def _simulate_from(self, root: MCTSNode, child: MCTSNode) -> None:
+        """Run one simulation that starts by taking ``child`` at the root."""
+        node = child
+        path = [root, child]
+        while (
+            not node.is_terminal()
+            and node.is_fully_expanded()
+            and node.children
+        ):
+            node = node.select_child()
+            path.append(node)
+        if not node.is_terminal() and not node.is_fully_expanded():
+            node = node.expand()
+            path.append(node)
+        value = self._evaluate_position(node.game_state)
+        self._backup_path(path, value)
+
+    def _gumbel_select(self, game_state: GameState) -> Action:
+        """Gumbel AlphaZero root search (Danihelka et al., ICLR 2022).
+
+        Sample the top-k root actions by logits + Gumbel noise, split the
+        simulation budget over them with sequential halving, and play the
+        survivor with the best g + logits + sigma(q). The policy target is
+        softmax(logits + sigma(completed q)): every legal action gets a
+        value (unvisited ones the mixed estimate v_mix), so the target can
+        move away from the prior even with a handful of simulations. Visit
+        counts at that budget mostly copy the prior, which is how earlier
+        runs collapsed onto passing.
+        """
+        root = MCTSNode(game_state)
+        root.fpu_reduction = self.fpu_reduction
+        self._last_root = root
+        self._set_prior_probabilities(root)
+        while root.untried_actions:
+            root.expand()
+        children = [child for _, child in root.children]
+        count = len(children)
+
+        priors = np.array(
+            [max(child.prior_prob, 1e-12) for child in children], dtype=float
+        )
+        priors /= priors.sum()
+        logits = np.log(priors)
+        if self.gumbel_noise:
+            uniform = np.array(
+                [max(random.random(), 1e-12) for _ in children], dtype=float
+            )
+            gumbel = -np.log(-np.log(uniform))
+        else:
+            gumbel = np.zeros(count)
+
+        # Child values are stored from the root mover's perspective; the
+        # leaf evaluator speaks for this agent.
+        sign = 1.0 if game_state.priority_player == self.player_id else -1.0
+        root_value = sign * self._evaluate_position(game_state)
+
+        def completed_q() -> np.ndarray:
+            visits = np.array([c.visits for c in children], dtype=float)
+            q = np.array(
+                [
+                    c.total_value / c.visits if c.visits else 0.0
+                    for c in children
+                ]
+            )
+            visited = visits > 0
+            if visited.any():
+                weight = priors[visited].sum()
+                mixed = (
+                    root_value
+                    + visits.sum()
+                    / weight
+                    * float((priors * q)[visited].sum())
+                ) / (1.0 + visits.sum())
+            else:
+                mixed = root_value
+            completed = np.where(visited, q, mixed)
+            return np.clip((completed + 1.0) / 2.0, 0.0, 1.0)
+
+        def sigma(q: np.ndarray) -> np.ndarray:
+            max_visits = max((c.visits for c in children), default=0)
+            return (self.c_visit + max_visits) * self.c_scale * q
+
+        considered = min(max(self.gumbel_k, 1), count)
+        remaining = list(np.argsort(-(gumbel + logits))[:considered])
+        phases = (
+            max(1, math.ceil(math.log2(considered))) if considered > 1 else 1
+        )
+        budget = max(self.simulations, 0)
+        used = 0
+        start = time.time()
+
+        while used < budget and time.time() - start < self.simulation_time:
+            per_action = max(1, budget // (phases * len(remaining)))
+            for index in remaining:
+                for _ in range(per_action):
+                    if used >= budget:
+                        break
+                    self._simulate_from(root, children[index])
+                    used += 1
+            if len(remaining) == 1:
+                break
+            score = gumbel + logits + sigma(completed_q())
+            remaining = sorted(remaining, key=lambda i: -score[i])[
+                : max(1, len(remaining) // 2)
+            ]
+
+        score = gumbel + logits + sigma(completed_q())
+        best = max(remaining, key=lambda i: score[i])
+
+        target = logits + sigma(completed_q())
+        target = np.exp(target - target.max())
+        target /= target.sum()
+        self._last_gumbel_policy = [
+            (action, float(p)) for (action, _), p in zip(root.children, target)
+        ]
+        return cast(Action, root.children[best][0])
+
     def _backup_path(self, path: List[MCTSNode], value: float) -> None:
         """Propagate a leaf value up the path with per-node perspective.
 
@@ -363,6 +544,11 @@ class MCTSAgent(Agent):
                 continue
             mover = node.parent.game_state.priority_player
             node.total_value += value if mover == self.player_id else -value
+
+    @property
+    def last_was_forced(self) -> bool:
+        """True when the last select_action had exactly one legal move."""
+        return getattr(self, "_last_forced", None) is not None
 
     def last_search_policy(self, width: int) -> ndarray[Any, Any]:
         """Visit-count distribution from the most recent search.
@@ -382,7 +568,30 @@ class MCTSAgent(Agent):
         root = self._last_root
         policy = np.zeros(width, dtype=np.float32)
 
+        forced = getattr(self, "_last_forced", None)
+        if root is None and forced is not None:
+            index = self.action_space.action_to_id.get(
+                forced.action_type.value
+            )
+            if index is not None and index < width:
+                policy[index] = 1.0
+                return policy
+
         if root is None or not root.children:
+            policy[:] = 1.0 / width
+            return policy
+
+        gumbel = getattr(self, "_last_gumbel_policy", None)
+        if gumbel:
+            for action, probability in gumbel:
+                index = self.action_space.action_to_id.get(
+                    action.action_type.value
+                )
+                if index is not None and index < width:
+                    policy[index] += probability
+            total = policy.sum()
+            if total > 0:
+                return cast(np.ndarray, policy / total)
             policy[:] = 1.0 / width
             return policy
 

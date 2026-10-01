@@ -176,3 +176,62 @@ def test_no_root_noise_by_default() -> None:
 
 def test_temperature_zero_is_the_default_and_deterministic() -> None:
     assert MCTSAgent(0).temperature == 0.0
+
+
+def test_first_play_urgency_is_off_by_default() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    assert parent.fpu_reduction is None
+    assert parent.first_play_value() == 0.0
+
+
+def test_first_play_urgency_uses_visited_siblings() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.1
+    visited_a = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_a.visits, visited_a.total_value = 4, -2.0  # Q = -0.5
+    visited_b = MCTSNode(create_standard_game_start(), parent=parent)
+    visited_b.visits, visited_b.total_value = 2, 0.6  # Q = +0.3
+    unvisited = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, visited_a), (None, visited_b), (None, unvisited)]
+    parent.visits = 6
+
+    assert abs(parent.first_play_value() - (-0.1 - 0.1)) < 1e-9
+    unvisited.prior_prob = 0.0
+    assert abs(parent.ucb1_score(unvisited) - (-0.2)) < 1e-9
+
+
+def test_first_play_urgency_without_visited_siblings_is_zero() -> None:
+    parent = MCTSNode(create_standard_game_start())
+    parent.fpu_reduction = 0.25
+    child = MCTSNode(create_standard_game_start(), parent=parent)
+    parent.children = [(None, child)]
+    assert parent.first_play_value() == 0.0
+
+
+def test_forced_move_skips_search_and_reports_one_hot() -> None:
+    from manamind.core.action import Action, ActionType
+
+    agent = MCTSAgent(player_id=0, simulations=50, simulation_time=5.0)
+    only = Action(action_type=ActionType.PASS_PRIORITY, player_id=0)
+    agent.action_space.get_legal_actions = lambda state: [only]
+
+    chosen = agent.select_action(create_standard_game_start())
+
+    assert chosen is only
+    assert agent.last_was_forced
+    policy = agent.last_search_policy(len(agent.action_space.action_to_id))
+    assert policy.sum() == 1.0
+    assert (
+        policy[agent.action_space.action_to_id[only.action_type.value]] == 1.0
+    )
+
+
+def test_real_choice_is_not_marked_forced() -> None:
+    from manamind.core.action import Action, ActionType
+
+    agent = MCTSAgent(player_id=0, simulations=4, simulation_time=5.0)
+    a = Action(action_type=ActionType.PASS_PRIORITY, player_id=0)
+    b = Action(action_type=ActionType.CONCEDE, player_id=0)
+    agent.action_space.get_legal_actions = lambda state: [a, b]
+    agent.select_action(create_standard_game_start())
+    assert not agent.last_was_forced

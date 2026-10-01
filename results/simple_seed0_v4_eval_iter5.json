@@ -1,0 +1,37 @@
+[
+  {
+    "checkpoint": "checkpoints/seed0_v4/iter_005.pt",
+    "simulations": 10,
+    "fpu_reduction": null,
+    "games": 20,
+    "win_rate": 0.0
+  },
+  {
+    "checkpoint": "checkpoints/seed0_v4/iter_005.pt",
+    "simulations": 10,
+    "fpu_reduction": 0.0,
+    "games": 20,
+    "win_rate": 0.0
+  },
+  {
+    "checkpoint": "checkpoints/seed0_v4/iter_005.pt",
+    "simulations": 10,
+    "fpu_reduction": 0.2,
+    "games": 20,
+    "win_rate": 0.0
+  },
+  {
+    "checkpoint": "checkpoints/seed0_v4/iter_005.pt",
+    "simulations": 40,
+    "fpu_reduction": null,
+    "games": 20,
+    "win_rate": 0.0
+  },
+  {
+    "checkpoint": "checkpoints/seed0_v4/iter_005.pt",
+    "simulations": 40,
+    "fpu_reduction": 0.0,
+    "games": 20,
+    "win_rate": 0.0
+  }
+]
