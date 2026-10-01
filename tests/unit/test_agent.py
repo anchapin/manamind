@@ -1,5 +1,7 @@
 """Tests for agent implementations."""
 
+import math
+
 from manamind.core.action import Action
 from manamind.core.agent import (
     MCTSAgent,
@@ -91,7 +93,13 @@ class TestMCTSNode:
         assert node.is_terminal() is True
 
     def test_mcts_node_ucb1_score(self):
-        """Test UCB1 score calculation."""
+        """Test PUCT selection score calculation.
+
+        Selection used to return infinity for every unvisited child, which
+        made the policy prior irrelevant: the first unvisited child found
+        always won. The score is now finite and prior-weighted, so this
+        asserts the current contract.
+        """
         game_state = create_empty_game_state()
         parent_node = MCTSNode(game_state)
         parent_node.visits = 2  # Parent needs visits for exploration term
@@ -99,9 +107,15 @@ class TestMCTSNode:
         # Create a child node
         child_node = MCTSNode(game_state)
 
-        # Child with no visits should have infinite score
+        # An unvisited child scores finitely, driven by its prior
         score = parent_node.ucb1_score(child_node)
-        assert score == float("inf")
+        assert math.isfinite(score)
+        assert score > 0
+
+        # A higher prior is worth more among equally unvisited children
+        eager_child = MCTSNode(game_state)
+        eager_child.prior_prob = child_node.prior_prob * 2
+        assert parent_node.ucb1_score(eager_child) > score
 
         # Child with visits should have finite score
         child_node.visits = 1

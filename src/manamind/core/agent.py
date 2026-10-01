@@ -5,16 +5,21 @@ This module defines the core agent interface and implements MCTS for decisions.
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
+from numpy import ndarray
 
 from manamind.core.action import Action, ActionSpace, ActionType
 from manamind.core.game_state import GameState
+
+logger = logging.getLogger(__name__)
 
 
 class Agent(ABC):
@@ -100,6 +105,11 @@ class MCTSNode:
         self.total_value = 0.0
         self.prior_prob = 1.0  # From policy network
 
+        # Priors for this node's legal actions, keyed by action identity.
+        # Populated by MCTSAgent._set_prior_probabilities so that a
+        # child created later by expand() inherits the right prior.
+        self.action_priors: Dict[int, float] = {}
+
         # Untried actions
         action_space = ActionSpace()
         self.untried_actions = action_space.get_legal_actions(game_state)
@@ -113,24 +123,37 @@ class MCTSNode:
         return self.game_state.is_game_over()
 
     def ucb1_score(self, child_node: MCTSNode, c: float = 1.414) -> float:
-        """Calculate UCB1 score for action selection.
+        """Score a child for selection.
+
+        With a policy prior attached this is PUCT, the AlphaZero selection
+        rule: the exploration term is scaled by the network's prior for the
+        action, so promising moves are searched first. Without a prior
+        (uniform 1.0 across children) it degrades to UCB1-style behaviour.
 
         Args:
             child_node: Child node to calculate score for
             c: Exploration parameter
 
         Returns:
-            UCB1 score
+            Selection score; higher is more worth searching
         """
-        if child_node.visits == 0:
-            return float("inf")
-
-        exploitation = child_node.total_value / child_node.visits
-        exploration = (
-            c * math.sqrt(math.log(self.visits) / child_node.visits)
-            if self.visits > 0
+        exploitation = (
+            child_node.total_value / child_node.visits
+            if child_node.visits > 0
             else 0.0
         )
+
+        # PUCT exploration: prior * sqrt(parent visits) / (1 + child visits).
+        # Unlike UCB1 this is finite for an unvisited child, so the prior
+        # decides which unexplored action is tried first instead of the
+        # arbitrary order they were generated in.
+        exploration = (
+            c
+            * child_node.prior_prob
+            * math.sqrt(max(self.visits, 1))
+            / (1 + child_node.visits)
+        )
+
         return exploitation + exploration
 
     def select_child(self) -> MCTSNode:
@@ -148,6 +171,11 @@ class MCTSNode:
         action = self.untried_actions.pop()
         new_state = action.execute(self.game_state)
         child_node = MCTSNode(new_state, action, self)
+
+        # Carry over the policy prior for this action, if one was set.
+        if self.action_priors:
+            child_node.prior_prob = self.action_priors.get(id(action), 0.0)
+
         self.children.append((action, child_node))
         return child_node
 
@@ -186,6 +214,10 @@ class MCTSAgent(Agent):
         super().__init__(player_id)
         self.policy_network = policy_network
         self.value_network = value_network
+
+        # Root of the most recent search, kept so callers (self-play) can
+        # read the visit distribution that produced the chosen action.
+        self._last_root: Optional[MCTSNode] = None
         self.simulations = simulations
         self.simulation_time = simulation_time
         self.c_puct = c_puct
@@ -201,10 +233,11 @@ class MCTSAgent(Agent):
             The selected action
         """
         root = MCTSNode(game_state)
+        self._last_root = root
 
-        # Set prior probabilities from policy network if available
-        if self.policy_network:
-            self._set_prior_probabilities(root)
+        # Priors shape which moves PUCT explores first. Set them even
+        # without a network: a uniform prior keeps selection well defined.
+        self._set_prior_probabilities(root)
 
         start_time = time.time()
         simulation_count = 0
@@ -259,18 +292,120 @@ class MCTSAgent(Agent):
             else Action(ActionType.PASS_PRIORITY, self.player_id)
         )
 
+    def last_search_policy(self, width: int) -> ndarray[Any, Any]:
+        """Visit-count distribution from the most recent search.
+
+        This is the AlphaZero policy target: MCTS acts as a policy
+        improvement operator over the network's raw output, so training
+        toward the search's visit counts is what makes the loop improve.
+
+        Args:
+            width: Length of the returned vector, normally the network's
+                action space size
+
+        Returns:
+            A probability vector of length `width`. Uniform if no search
+            has run yet or the search produced no children.
+        """
+        root = self._last_root
+        policy = np.zeros(width, dtype=np.float32)
+
+        if root is None or not root.children:
+            policy[:] = 1.0 / width
+            return policy
+
+        for action, child in root.children:
+            index = self.action_space.action_to_id.get(
+                action.action_type.value
+            )
+            if index is None or index >= width:
+                continue
+            policy[index] += float(child.visits)
+
+        total = policy.sum()
+        if total <= 0:
+            policy[:] = 1.0 / width
+        else:
+            policy /= total
+
+        return policy
+
+    def _policy_priors(self, node: MCTSNode) -> Dict[int, float]:
+        """Ask the policy network for a prior over this node's legal actions.
+
+        Returns a mapping from the index of a legal action (in the node's
+        own ordering) to its prior probability, normalised over the legal
+        actions only. An empty mapping means the caller should fall back to
+        uniform priors.
+        """
+        if self.policy_network is None:
+            return {}
+
+        actions = self._node_actions(node)
+        if not actions:
+            return {}
+
+        try:
+            with torch.no_grad():
+                output = self.policy_network(node.game_state)
+                logits = output[0] if isinstance(output, tuple) else output
+                probs = torch.softmax(logits.view(-1), dim=-1)
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning(f"Policy network evaluation failed: {error}")
+            return {}
+
+        # Mask to legal actions, then renormalise. The action space is a
+        # coarse action-type mapping today (see ActionSpace TODOs), so
+        # several legal actions can share one index; they split that mass
+        # evenly rather than each claiming it.
+        width = probs.numel()
+        raw: List[float] = []
+        for action in actions:
+            index = self.action_space.action_to_id.get(
+                action.action_type.value
+            )
+            if index is None or index >= width:
+                raw.append(0.0)
+            else:
+                raw.append(float(probs[index]))
+
+        total = sum(raw)
+        if total <= 0:
+            return {}
+
+        return {position: value / total for position, value in enumerate(raw)}
+
+    def _node_actions(self, node: MCTSNode) -> List[Action]:
+        """All legal actions at a node, expanded or not, in a stable order."""
+        return list(node.untried_actions) + [
+            action for action, _ in node.children
+        ]
+
     def _set_prior_probabilities(self, node: MCTSNode) -> None:
-        """Set prior probabilities for actions using the policy network."""
-        if not self.policy_network:
+        """Attach policy priors to a node for PUCT selection.
+
+        Priors are cached on the node so a child created later by expand()
+        picks up the prior for the action that produced it, instead of the
+        default 1.0 that would make PUCT behave as if every move were
+        equally promising.
+        """
+        actions = self._node_actions(node)
+        if not actions:
             return
 
-        # TODO: Implement policy network evaluation
-        # For now, set uniform priors
-        num_actions = len(node.untried_actions)
-        if num_actions > 0:
-            for action in node.untried_actions:
-                # This would be set from policy network output
-                pass
+        priors = self._policy_priors(node)
+        if not priors:
+            uniform = 1.0 / len(actions)
+            priors = {position: uniform for position in range(len(actions))}
+
+        node.action_priors = {
+            id(action): priors.get(position, 0.0)
+            for position, action in enumerate(actions)
+        }
+
+        # Children that already exist get their prior now.
+        for action, child in node.children:
+            child.prior_prob = node.action_priors.get(id(action), 0.0)
 
     def _evaluate_position(self, game_state: GameState) -> float:
         """Evaluate a game position.
@@ -299,17 +434,37 @@ class MCTSAgent(Agent):
         return self._heuristic_evaluation(game_state)
 
     def _evaluate_with_network(self, game_state: GameState) -> float:
-        """Evaluate position using neural network.
+        """Evaluate a position with the value head.
 
         Args:
             game_state: Game state to evaluate
 
         Returns:
-            Network evaluation (-1 to 1)
+            Network evaluation in [-1, 1], from the perspective of the
+            player this agent controls. Falls back to the heuristic if the
+            network cannot evaluate the state.
         """
-        # TODO: Implement network evaluation
-        # This requires the game state encoder and value network
-        return 0.0
+        if self.value_network is None:
+            return self._heuristic_evaluation(game_state)
+
+        try:
+            with torch.no_grad():
+                output = self.value_network(game_state)
+                value = output[1] if isinstance(output, tuple) else output
+                scalar = float(value.view(-1)[0])
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning(f"Value network evaluation failed: {error}")
+            return self._heuristic_evaluation(game_state)
+
+        if not math.isfinite(scalar):
+            return self._heuristic_evaluation(game_state)
+
+        # The value head is trained from the active player's point of view;
+        # flip it when this agent is not the one to act.
+        if game_state.active_player != self.player_id:
+            scalar = -scalar
+
+        return max(-1.0, min(1.0, scalar))
 
     def _heuristic_evaluation(self, game_state: GameState) -> float:
         """Simple heuristic evaluation of the position.
