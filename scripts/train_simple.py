@@ -199,20 +199,53 @@ def save_checkpoint(
     seed: int,
     action_space_size: int,
     result: IterationResult,
+    resume_state: Optional[dict] = None,
 ) -> None:
-    """Write weights plus enough metadata to rebuild and re-evaluate."""
+    """Write weights plus enough metadata to rebuild and re-evaluate.
+
+    ``resume_state`` (replay buffer, results so far, baseline and RNG
+    states) lets ``--resume`` continue a run a restart interrupted.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "network": network.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "iteration": iteration,
-            "seed": seed,
-            "action_space_size": action_space_size,
-            "result": result.as_dict(),
-        },
-        path,
-    )
+    payload = {
+        "network": network.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "iteration": iteration,
+        "seed": seed,
+        "action_space_size": action_space_size,
+        "result": result.as_dict(),
+    }
+    if resume_state is not None:
+        payload["resume"] = resume_state
+    tmp = path.with_suffix(".tmp")
+    torch.save(payload, tmp)
+    tmp.replace(path)
+
+
+def rng_state() -> dict:
+    """Capture every RNG the training loop draws from."""
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+
+
+def restore_rng_state(state: dict) -> None:
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+
+
+def latest_resumable(checkpoint_dir: Optional[Path]) -> Optional[Path]:
+    """Newest iter_NNN.pt in ``checkpoint_dir`` that carries resume state."""
+    if checkpoint_dir is None or not checkpoint_dir.is_dir():
+        return None
+    for path in sorted(checkpoint_dir.glob("iter_*.pt"), reverse=True):
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        if "resume" in payload:
+            return path
+    return None
 
 
 def load_checkpoint(path: Path) -> PolicyValueNetwork:
@@ -261,6 +294,7 @@ def train(
     out: Optional[Path] = None,
     checkpoint_dir: Optional[Path] = None,
     fpu_reduction: Optional[float] = None,
+    resume: bool = False,
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -273,19 +307,43 @@ def train(
 
     buffer: List[Example] = []
     results: List[IterationResult] = []
+    start = 1
 
-    baseline = evaluate(
-        network,
-        games=eval_games,
-        simulations=simulations,
-        seed=seed * 7919,
-        fpu_reduction=fpu_reduction,
-    )
-    print(
-        f"iter  0  win_rate {baseline:.3f}  (untrained baseline)", flush=True
-    )
+    resume_from = latest_resumable(checkpoint_dir) if resume else None
+    if resume_from is not None:
+        payload = torch.load(
+            resume_from, map_location="cpu", weights_only=False
+        )
+        if payload["seed"] != seed:
+            raise ValueError(
+                f"{resume_from} was trained with seed {payload['seed']}, "
+                f"not {seed}"
+            )
+        network.load_state_dict(payload["network"])
+        optimizer.load_state_dict(payload["optimizer"])
+        state = payload["resume"]
+        buffer = list(state["buffer"])
+        results = [IterationResult(**r) for r in state["results"]]
+        baseline = state["baseline"]
+        restore_rng_state(state["rng"])
+        start = payload["iteration"] + 1
+        print(
+            f"resumed from {resume_from} (iteration {start - 1})", flush=True
+        )
+    else:
+        baseline = evaluate(
+            network,
+            games=eval_games,
+            simulations=simulations,
+            seed=seed * 7919,
+            fpu_reduction=fpu_reduction,
+        )
+        print(
+            f"iter  0  win_rate {baseline:.3f}  (untrained baseline)",
+            flush=True,
+        )
 
-    for iteration in range(1, iterations + 1):
+    for iteration in range(start, iterations + 1):
         turns = []
         for game in range(games):
             agents: Dict[int, object] = {
@@ -346,6 +404,12 @@ def train(
                 seed=seed,
                 action_space_size=action_space_size,
                 result=result,
+                resume_state={
+                    "buffer": buffer,
+                    "results": [r.as_dict() for r in results],
+                    "baseline": baseline,
+                    "rng": rng_state(),
+                },
             )
         print(
             f"iter {iteration:>2}  win_rate {win_rate:.3f}  "
@@ -389,6 +453,12 @@ def main() -> None:
         help="first-play urgency: unvisited moves start at the mean value "
         "of visited siblings minus this; omit for the old flat 0",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue from the newest resumable checkpoint in "
+        "--checkpoint-dir instead of starting over",
+    )
     args = parser.parse_args()
 
     train(
@@ -400,6 +470,7 @@ def main() -> None:
         out=args.out,
         checkpoint_dir=args.checkpoint_dir,
         fpu_reduction=args.fpu_reduction,
+        resume=args.resume,
     )
 
 
