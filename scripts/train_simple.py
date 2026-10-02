@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import multiprocessing as mp
 import random
 from dataclasses import dataclass
@@ -75,12 +76,16 @@ class IterationResult:
     # Score against the frozen untrained network with the same search.
     # None for runs from before this existed, or with --ref-eval-games 0.
     ref_win_rate: Optional[float] = None
+    # Score against the frozen --anchor checkpoint; None on iterations
+    # without an anchor check.
+    anchor_score: Optional[float] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
             "iteration": self.iteration,
             "win_rate": self.win_rate,
             "ref_win_rate": self.ref_win_rate,
+            "anchor_score": self.anchor_score,
             "mean_loss": self.mean_loss,
             "examples": self.examples,
             "mean_turns": self.mean_turns,
@@ -98,6 +103,31 @@ def value_target(z: float, q_root: Optional[float], value_mix: float) -> float:
     if q_root is None or value_mix == 0.0:
         return z
     return (1.0 - value_mix) * z + value_mix * q_root
+
+
+def wilson_interval(
+    score: float, games: int, z: float = 1.96
+) -> Tuple[float, float]:
+    """95% Wilson interval for a score over ``games`` games."""
+    if games <= 0:
+        return float("nan"), float("nan")
+    centre = score + z * z / (2 * games)
+    half = z * math.sqrt(
+        score * (1 - score) / games + z * z / (4 * games * games)
+    )
+    denom = 1 + z * z / games
+    return (centre - half) / denom, (centre + half) / denom
+
+
+def plateau_reached(scores: List[float], patience: int) -> bool:
+    """True once the last ``patience`` scores never beat the best before them.
+
+    ``scores`` are the anchor checks in order. Ties do not count as
+    progress, so a run pinned at the same score stops too.
+    """
+    if patience <= 0 or len(scores) <= patience:
+        return False
+    return max(scores[-patience:]) <= max(scores[:-patience])
 
 
 def play_game(
@@ -463,6 +493,7 @@ def _write_results(
     baseline: float,
     results: List[IterationResult],
     value_mix: float = 0.0,
+    extra: Optional[Dict[str, object]] = None,
 ) -> None:
     """Write the curve so far; called every iteration so a crash keeps it."""
     if out is None:
@@ -478,7 +509,21 @@ def _write_results(
         "baseline_win_rate": baseline,
         "results": [r.as_dict() for r in results],
     }
+    payload.update(extra or {})
     out.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def best_anchor(
+    results: List[IterationResult],
+) -> Optional[Tuple[int, float]]:
+    """(iteration, score) of the first-best anchor check, if any."""
+    best: Optional[Tuple[int, float]] = None
+    for r in results:
+        if r.anchor_score is not None and (
+            best is None or r.anchor_score > best[1]
+        ):
+            best = (r.iteration, r.anchor_score)
+    return best
 
 
 def train(
@@ -495,8 +540,15 @@ def train(
     value_mix: float = 0.0,
     ref_eval_games: Optional[int] = None,
     workers: int = 1,
+    anchor: Optional[Path] = None,
+    anchor_every: int = 5,
+    anchor_games: int = 40,
+    plateau: int = 0,
 ) -> List[IterationResult]:
+    if plateau > 0 and anchor is None:
+        raise ValueError("--plateau needs --anchor to measure progress")
     seed_everything(seed)
+    anchor_net = load_checkpoint(anchor) if anchor is not None else None
 
     probe = MCTSAgent(player_id=0, simulations=1, simulation_time=0.01)
     action_space_size = len(probe.action_space.action_to_id)
@@ -548,6 +600,22 @@ def train(
             flush=True,
         )
 
+    stopped_at: Optional[int] = None
+
+    def extra() -> Dict[str, object]:
+        if anchor is None:
+            return {}
+        best = best_anchor(results)
+        return {
+            "anchor": str(anchor),
+            "anchor_every": anchor_every,
+            "anchor_games": anchor_games,
+            "plateau": plateau,
+            "best_anchor_iteration": best[0] if best else None,
+            "best_anchor_score": best[1] if best else None,
+            "stopped_at": stopped_at,
+        }
+
     for iteration in range(start, iterations + 1):
         turns = []
         jobs = [
@@ -591,16 +659,36 @@ def train(
             if n_ref > 0
             else None
         )
+        anchor_score = None
+        if anchor_net is not None and (
+            iteration % anchor_every == 0 or iteration == iterations
+        ):
+            anchor_score = evaluate_vs_reference(
+                network,
+                anchor_net,
+                games=anchor_games,
+                simulations=simulations,
+                seed=seed * 15485863 + iteration,
+                fpu_reduction=fpu_reduction,
+                search=search,
+                workers=workers,
+            )
 
         result = IterationResult(
             iteration=iteration,
             win_rate=win_rate,
             ref_win_rate=ref_win_rate,
+            anchor_score=anchor_score,
             mean_loss=float(np.mean(losses)) if losses else float("nan"),
             examples=len(buffer),
             mean_turns=float(np.mean(turns)),
         )
         results.append(result)
+        scores = [
+            r.anchor_score for r in results if r.anchor_score is not None
+        ]
+        if anchor_score is not None and plateau_reached(scores, plateau):
+            stopped_at = iteration
         _write_results(
             out,
             seed,
@@ -611,6 +699,7 @@ def train(
             baseline,
             results,
             value_mix,
+            extra(),
         )
         if checkpoint_dir is not None:
             save_checkpoint(
@@ -640,6 +729,33 @@ def train(
             f"mean_turns {result.mean_turns:.1f}",
             flush=True,
         )
+        if anchor_score is not None:
+            lo, hi = wilson_interval(anchor_score, anchor_games)
+            best = best_anchor(results)
+            is_best = best is not None and best[0] == iteration
+            print(
+                f"         vs_anchor {anchor_score:.3f}  "
+                f"(95% CI {lo:.3f}-{hi:.3f}, {anchor_games} games)"
+                + ("  new best" if is_best else ""),
+                flush=True,
+            )
+            if is_best and checkpoint_dir is not None:
+                save_checkpoint(
+                    checkpoint_dir / "best.pt",
+                    network,
+                    optimizer,
+                    iteration=iteration,
+                    seed=seed,
+                    action_space_size=action_space_size,
+                    result=result,
+                )
+        if stopped_at is not None:
+            print(
+                f"stopping: vs_anchor has not beaten its best in the last "
+                f"{plateau} checks",
+                flush=True,
+            )
+            break
 
     _write_results(
         out,
@@ -651,6 +767,7 @@ def train(
         baseline,
         results,
         value_mix,
+        extra(),
     )
 
     return results
@@ -705,6 +822,32 @@ def main() -> None:
         "1 runs inline like before",
     )
     parser.add_argument(
+        "--anchor",
+        type=Path,
+        default=None,
+        help="frozen checkpoint to play every --anchor-every iterations; "
+        "the score against it is the progress signal for --plateau",
+    )
+    parser.add_argument(
+        "--anchor-every",
+        type=int,
+        default=5,
+        help="iterations between anchor checks (the last one always checks)",
+    )
+    parser.add_argument(
+        "--anchor-games",
+        type=int,
+        default=40,
+        help="seat-swapped greedy games per anchor check",
+    )
+    parser.add_argument(
+        "--plateau",
+        type=int,
+        default=0,
+        help="stop once the anchor score has not beaten its best for this "
+        "many checks in a row (0 = off; --iterations stays the hard cap)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -726,6 +869,10 @@ def main() -> None:
         value_mix=args.value_mix,
         ref_eval_games=args.ref_eval_games,
         workers=args.workers,
+        anchor=args.anchor,
+        anchor_every=args.anchor_every,
+        anchor_games=args.anchor_games,
+        plateau=args.plateau,
     )
 
 
