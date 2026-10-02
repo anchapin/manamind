@@ -13,7 +13,9 @@ the same curve.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import multiprocessing as mp
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,23 +72,43 @@ class IterationResult:
     mean_loss: float
     examples: int
     mean_turns: float
+    # Score against the frozen untrained network with the same search.
+    # None for runs from before this existed, or with --ref-eval-games 0.
+    ref_win_rate: Optional[float] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
             "iteration": self.iteration,
             "win_rate": self.win_rate,
+            "ref_win_rate": self.ref_win_rate,
             "mean_loss": self.mean_loss,
             "examples": self.examples,
             "mean_turns": self.mean_turns,
         }
 
 
+def value_target(z: float, q_root: Optional[float], value_mix: float) -> float:
+    """Soft-Z value target: blend the game result with the search's view.
+
+    ``z`` is the final result from the mover's side (+1, 0, -1) and
+    ``q_root`` the root's mean value after search, from the same side.
+    ``value_mix`` 0 trains on the result alone (plain AlphaZero); 1 trains
+    on the search value alone. Without a search value, the result is used.
+    """
+    if q_root is None or value_mix == 0.0:
+        return z
+    return (1.0 - value_mix) * z + value_mix * q_root
+
+
 def play_game(
-    agents: Dict[int, object], seed: int, record: bool = False
+    agents: Dict[int, object],
+    seed: int,
+    record: bool = False,
+    value_mix: float = 0.0,
 ) -> Tuple[Optional[int], int, List[Example]]:
     """Play one simple-mode game. Returns winner, turns, examples."""
     state = create_simple_game_start(seed)
-    history: List[Tuple[GameState, np.ndarray, int]] = []
+    history: List[Tuple[GameState, np.ndarray, int, Optional[float]]] = []
 
     for _ in range(MAX_STEPS):
         if state.is_game_over():
@@ -108,6 +130,7 @@ def play_game(
                         actor.policy_network.action_space_size
                     ),
                     state.priority_player,
+                    actor.last_root_value(),
                 )
             )
         state = action.execute(state)
@@ -115,12 +138,147 @@ def play_game(
     winner = state.winner()
     examples: List[Example] = []
     if record:
-        for snapshot, policy, mover in history:
-            value = (
-                0.0 if winner is None else (1.0 if winner == mover else -1.0)
+        for snapshot, policy, mover, q_root in history:
+            z = 0.0 if winner is None else (1.0 if winner == mover else -1.0)
+            examples.append(
+                Example(snapshot, policy, value_target(z, q_root, value_mix))
             )
-            examples.append(Example(snapshot, policy, value))
     return winner, state.turn_number, examples
+
+
+@dataclass
+class GameJob:
+    """One game to play: who sits where, and with what search settings.
+
+    ``kind`` is "selfplay" (network vs itself, noisy, recorded), "random"
+    (network on ``seat`` vs RandomAgent) or "reference" (network on
+    ``seat`` vs the same search driven by the frozen reference network).
+    """
+
+    kind: str
+    seed: int
+    seat: int = 0
+    simulations: int = 10
+    fpu_reduction: Optional[float] = None
+    search: str = "puct"
+    value_mix: float = 0.0
+
+
+def _search_agent(
+    job: GameJob, pid: int, net: PolicyValueNetwork, noisy: bool
+) -> MCTSAgent:
+    extra: Dict[str, object] = (
+        {
+            "root_dirichlet_alpha": ROOT_DIRICHLET_ALPHA,
+            "temperature": SELF_PLAY_TEMPERATURE,
+            "gumbel_noise": True,
+        }
+        if noisy
+        else {}
+    )
+    return MCTSAgent(
+        player_id=pid,
+        policy_network=net,
+        value_network=net,
+        simulations=job.simulations,
+        simulation_time=30.0,
+        deck_lists=known_deck_lists(),
+        fpu_reduction=job.fpu_reduction,
+        search=job.search,
+        **extra,
+    )
+
+
+def _play_job(
+    job: GameJob, nets: Dict[str, PolicyValueNetwork], reseed: bool
+) -> Tuple[Optional[int], int, List[Example]]:
+    if reseed:
+        # Parallel games each get their own RNG stream, so a run gives
+        # the same games whatever the worker count.
+        seed_everything(job.seed)
+    net = nets["net"]
+    seat = job.seat
+    agents: Dict[int, object]
+    if job.kind == "selfplay":
+        agents = {pid: _search_agent(job, pid, net, True) for pid in (0, 1)}
+    elif job.kind == "random":
+        agents = {
+            seat: _search_agent(job, seat, net, False),
+            1 - seat: RandomAgent(1 - seat, seed=job.seed),
+        }
+    elif job.kind == "reference":
+        agents = {
+            seat: _search_agent(job, seat, net, False),
+            1 - seat: _search_agent(job, 1 - seat, nets["ref"], False),
+        }
+    else:
+        raise ValueError(f"unknown game kind {job.kind!r}")
+    return play_game(
+        agents,
+        seed=job.seed,
+        record=job.kind == "selfplay",
+        value_mix=job.value_mix,
+    )
+
+
+_WORKER_NETS: Dict[str, PolicyValueNetwork] = {}
+
+
+def _init_worker(
+    action_space_size: int, state_dicts: Dict[str, Dict[str, torch.Tensor]]
+) -> None:
+    # One core per worker: the speedup comes from games running side by
+    # side, not from torch threads fighting over the same cores.
+    torch.set_num_threads(1)
+    for name, state_dict in state_dicts.items():
+        net = build_simple_network(action_space_size=action_space_size)
+        net.load_state_dict(state_dict)
+        net.eval()
+        _WORKER_NETS[name] = net
+
+
+def _worker_play(job: GameJob) -> Tuple[Optional[int], int, List[Example]]:
+    return _play_job(job, _WORKER_NETS, reseed=True)
+
+
+def run_games(
+    jobs: List[GameJob],
+    nets: Dict[str, PolicyValueNetwork],
+    workers: int = 1,
+) -> List[Tuple[Optional[int], int, List[Example]]]:
+    """Play ``jobs`` in order, or across ``workers`` processes.
+
+    Games are independent, so they parallelise cleanly; the two seats of
+    one game cannot, because they move in turn. ``workers`` 1 runs inline
+    and reproduces the serial runs from before this option existed.
+    """
+    if workers <= 1 or len(jobs) <= 1:
+        return [_play_job(job, nets, reseed=False) for job in jobs]
+    state_dicts = {
+        name: {k: v.detach().cpu() for k, v in net.state_dict().items()}
+        for name, net in nets.items()
+    }
+    size = nets["net"].action_space_size
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(
+        min(workers, len(jobs)),
+        initializer=_init_worker,
+        initargs=(size, state_dicts),
+    ) as pool:
+        return pool.map(_worker_play, jobs, chunksize=1)
+
+
+def _score(
+    jobs: List[GameJob],
+    results: List[Tuple[Optional[int], int, List[Example]]],
+) -> float:
+    score = 0.0
+    for job, (winner, _, _) in zip(jobs, results):
+        if winner == job.seat:
+            score += 1.0
+        elif winner is None:
+            score += 0.5
+    return score / len(jobs) if jobs else float("nan")
 
 
 def evaluate(
@@ -130,34 +288,45 @@ def evaluate(
     seed: int,
     fpu_reduction: Optional[float] = None,
     search: str = "puct",
+    workers: int = 1,
 ) -> float:
     """Win rate against RandomAgent, seats alternating.
 
     Alternating seats matters: whoever moves first in this subset wins more
     often, so a fixed seat would read as skill.
     """
-    score = 0.0
-    for game in range(games):
-        seat = game % 2
-        agents: Dict[int, object] = {
-            seat: MCTSAgent(
-                player_id=seat,
-                policy_network=network,
-                value_network=network,
-                simulations=simulations,
-                simulation_time=30.0,
-                fpu_reduction=fpu_reduction,
-                search=search,
-                deck_lists=known_deck_lists(),
-            ),
-            1 - seat: RandomAgent(1 - seat, seed=seed + game),
-        }
-        winner, _, _ = play_game(agents, seed=seed + game)
-        if winner == seat:
-            score += 1.0
-        elif winner is None:
-            score += 0.5
-    return score / games
+    jobs = [
+        GameJob("random", seed + g, g % 2, simulations, fpu_reduction, search)
+        for g in range(games)
+    ]
+    return _score(jobs, run_games(jobs, {"net": network}, workers))
+
+
+def evaluate_vs_reference(
+    network: PolicyValueNetwork,
+    reference: PolicyValueNetwork,
+    games: int,
+    simulations: int,
+    seed: int,
+    fpu_reduction: Optional[float] = None,
+    search: str = "puct",
+    workers: int = 1,
+) -> float:
+    """Score against the same search driven by a frozen reference network.
+
+    Search alone beats RandomAgent most of the time before any training,
+    so that metric saturates. Here both seats search with identical
+    settings and only the networks differ, so a score above 0.5 is what
+    training added. Seats alternate, greedy play, draws count half.
+    """
+    jobs = [
+        GameJob(
+            "reference", seed + g, g % 2, simulations, fpu_reduction, search
+        )
+        for g in range(games)
+    ]
+    nets = {"net": network, "ref": reference}
+    return _score(jobs, run_games(jobs, nets, workers))
 
 
 def train_on_buffer(
@@ -282,6 +451,7 @@ def _write_results(
     simulations: int,
     baseline: float,
     results: List[IterationResult],
+    value_mix: float = 0.0,
 ) -> None:
     """Write the curve so far; called every iteration so a crash keeps it."""
     if out is None:
@@ -293,6 +463,7 @@ def _write_results(
         "games_per_iteration": games,
         "eval_games": eval_games,
         "simulations": simulations,
+        "value_mix": value_mix,
         "baseline_win_rate": baseline,
         "results": [r.as_dict() for r in results],
     }
@@ -310,6 +481,9 @@ def train(
     fpu_reduction: Optional[float] = None,
     resume: bool = False,
     search: str = "puct",
+    value_mix: float = 0.0,
+    ref_eval_games: Optional[int] = None,
+    workers: int = 1,
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -317,6 +491,9 @@ def train(
     action_space_size = len(probe.action_space.action_to_id)
 
     network = build_simple_network(action_space_size=action_space_size)
+    # Taken before any resume load, so a resumed run rebuilds the same
+    # untrained weights from the seed.
+    reference = copy.deepcopy(network).eval()
     optimizer = torch.optim.Adam(network.parameters(), lr=1e-3)
     loss_fn = PolicyValueLoss(value_weight=1.0, l2_reg=1e-4)
 
@@ -353,6 +530,7 @@ def train(
             seed=seed * 7919,
             fpu_reduction=fpu_reduction,
             search=search,
+            workers=workers,
         )
         print(
             f"iter  0  win_rate {baseline:.3f}  (untrained baseline)",
@@ -361,28 +539,18 @@ def train(
 
     for iteration in range(start, iterations + 1):
         turns = []
-        for game in range(games):
-            agents: Dict[int, object] = {
-                pid: MCTSAgent(
-                    player_id=pid,
-                    policy_network=network,
-                    value_network=network,
-                    simulations=simulations,
-                    simulation_time=30.0,
-                    deck_lists=known_deck_lists(),
-                    root_dirichlet_alpha=ROOT_DIRICHLET_ALPHA,
-                    temperature=SELF_PLAY_TEMPERATURE,
-                    fpu_reduction=fpu_reduction,
-                    search=search,
-                    gumbel_noise=True,
-                )
-                for pid in (0, 1)
-            }
-            _, length, examples = play_game(
-                agents,
-                seed=seed * 1000 + iteration * 100 + game,
-                record=True,
+        jobs = [
+            GameJob(
+                "selfplay",
+                seed * 1000 + iteration * 100 + game,
+                simulations=simulations,
+                fpu_reduction=fpu_reduction,
+                search=search,
+                value_mix=value_mix,
             )
+            for game in range(games)
+        ]
+        for _, length, examples in run_games(jobs, {"net": network}, workers):
             buffer.extend(examples)
             turns.append(length)
 
@@ -395,11 +563,28 @@ def train(
             seed=seed * 7919 + iteration,
             fpu_reduction=fpu_reduction,
             search=search,
+            workers=workers,
+        )
+        n_ref = eval_games if ref_eval_games is None else ref_eval_games
+        ref_win_rate = (
+            evaluate_vs_reference(
+                network,
+                reference,
+                games=n_ref,
+                simulations=simulations,
+                seed=seed * 104729 + iteration,
+                fpu_reduction=fpu_reduction,
+                search=search,
+                workers=workers,
+            )
+            if n_ref > 0
+            else None
         )
 
         result = IterationResult(
             iteration=iteration,
             win_rate=win_rate,
+            ref_win_rate=ref_win_rate,
             mean_loss=float(np.mean(losses)) if losses else float("nan"),
             examples=len(buffer),
             mean_turns=float(np.mean(turns)),
@@ -414,6 +599,7 @@ def train(
             simulations,
             baseline,
             results,
+            value_mix,
         )
         if checkpoint_dir is not None:
             save_checkpoint(
@@ -434,7 +620,12 @@ def train(
             )
         print(
             f"iter {iteration:>2}  win_rate {win_rate:.3f}  "
-            f"loss {result.mean_loss:.4f}  examples {len(buffer)}  "
+            + (
+                f"vs_untrained {ref_win_rate:.3f}  "
+                if ref_win_rate is not None
+                else ""
+            )
+            + f"loss {result.mean_loss:.4f}  examples {len(buffer)}  "
             f"mean_turns {result.mean_turns:.1f}",
             flush=True,
         )
@@ -448,6 +639,7 @@ def train(
         simulations,
         baseline,
         results,
+        value_mix,
     )
 
     return results
@@ -481,6 +673,27 @@ def main() -> None:
         help="root search: AlphaZero PUCT (default) or Gumbel AlphaZero",
     )
     parser.add_argument(
+        "--value-mix",
+        type=float,
+        default=0.0,
+        help="soft-Z value target: weight of the root search value against "
+        "the game result (0 = result only, the AlphaZero default)",
+    )
+    parser.add_argument(
+        "--ref-eval-games",
+        type=int,
+        default=None,
+        help="games per iteration against the frozen untrained network "
+        "with the same search (default: --eval-games; 0 to skip)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="processes for self-play and eval games (one core each); "
+        "1 runs inline like before",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -499,6 +712,9 @@ def main() -> None:
         fpu_reduction=args.fpu_reduction,
         resume=args.resume,
         search=args.search,
+        value_mix=args.value_mix,
+        ref_eval_games=args.ref_eval_games,
+        workers=args.workers,
     )
 
 
