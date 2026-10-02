@@ -119,15 +119,22 @@ def wilson_interval(
     return (centre - half) / denom, (centre + half) / denom
 
 
-def plateau_reached(scores: List[float], patience: int) -> bool:
-    """True once the last ``patience`` scores never beat the best before them.
+def plateau_reached(
+    scores: List[float], patience: int, tolerance: float = 0.0
+) -> bool:
+    """True once the last ``patience`` scores all fall clearly below the best.
 
-    ``scores`` are the anchor checks in order. Ties do not count as
-    progress, so a run pinned at the same score stops too.
+    ``scores`` are the anchor checks in order. A check within ``tolerance``
+    of the best before it (ties included) still counts as keeping pace, so
+    one noisy check can't end a run that is holding its level. The run
+    stops only after ``patience`` checks in a row land more than
+    ``tolerance`` under that best, which is what a collapse looks like. A
+    run that holds flat goes on to the --iterations cap.
     """
     if patience <= 0 or len(scores) <= patience:
         return False
-    return max(scores[-patience:]) <= max(scores[:-patience])
+    best_before = max(scores[:-patience])
+    return all(s < best_before - tolerance for s in scores[-patience:])
 
 
 def play_game(
@@ -542,8 +549,9 @@ def train(
     workers: int = 1,
     anchor: Optional[Path] = None,
     anchor_every: int = 5,
-    anchor_games: int = 40,
+    anchor_games: int = 80,
     plateau: int = 0,
+    plateau_tolerance: float = 0.05,
 ) -> List[IterationResult]:
     if plateau > 0 and anchor is None:
         raise ValueError("--plateau needs --anchor to measure progress")
@@ -611,6 +619,7 @@ def train(
             "anchor_every": anchor_every,
             "anchor_games": anchor_games,
             "plateau": plateau,
+            "plateau_tolerance": plateau_tolerance,
             "best_anchor_iteration": best[0] if best else None,
             "best_anchor_score": best[1] if best else None,
             "stopped_at": stopped_at,
@@ -687,7 +696,9 @@ def train(
         scores = [
             r.anchor_score for r in results if r.anchor_score is not None
         ]
-        if anchor_score is not None and plateau_reached(scores, plateau):
+        if anchor_score is not None and plateau_reached(
+            scores, plateau, plateau_tolerance
+        ):
             stopped_at = iteration
         _write_results(
             out,
@@ -751,8 +762,8 @@ def train(
                 )
         if stopped_at is not None:
             print(
-                f"stopping: vs_anchor has not beaten its best in the last "
-                f"{plateau} checks",
+                f"stopping: vs_anchor has been more than "
+                f"{plateau_tolerance:.2f} below its best for {plateau} checks",
                 flush=True,
             )
             break
@@ -837,15 +848,24 @@ def main() -> None:
     parser.add_argument(
         "--anchor-games",
         type=int,
-        default=40,
-        help="seat-swapped greedy games per anchor check",
+        default=80,
+        help="seat-swapped greedy games per anchor check (80 gives a 95%% "
+        "CI of about +/-0.11; 40 was about +/-0.15, too noisy to rank seeds)",
     )
     parser.add_argument(
         "--plateau",
         type=int,
         default=0,
-        help="stop once the anchor score has not beaten its best for this "
-        "many checks in a row (0 = off; --iterations stays the hard cap)",
+        help="stop once this many anchor checks in a row land more than "
+        "--plateau-tol below the best so far (0 = off; --iterations stays "
+        "the hard cap; 4 is a sensible value)",
+    )
+    parser.add_argument(
+        "--plateau-tol",
+        type=float,
+        default=0.05,
+        help="how far below the best an anchor check can land and still "
+        "count as keeping pace",
     )
     parser.add_argument(
         "--resume",
@@ -873,6 +893,7 @@ def main() -> None:
         anchor_every=args.anchor_every,
         anchor_games=args.anchor_games,
         plateau=args.plateau,
+        plateau_tolerance=args.plateau_tol,
     )
 
 
