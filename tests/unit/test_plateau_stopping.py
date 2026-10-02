@@ -94,7 +94,10 @@ def test_anchor_run_writes_scores_and_best(tmp_path: Path) -> None:
     assert all(s is not None for s in scores)
     assert payload["best_anchor_score"] == max(scores)
     assert (ckpt / "best.pt").exists()
-    # A plateau of 1 stops at the first check that doesn't improve.
-    if payload["stopped_at"] is not None:
-        assert payload["stopped_at"] == len(results) < 3
+    # A plateau of 1 stops at the first check that doesn't improve; that
+    # can be the last iteration, so stopped_at may equal the cap.
+    if payload["stopped_at"] is None:
+        assert len(results) == 3
+    else:
+        assert payload["stopped_at"] == len(results) <= 3
         assert scores[-1] <= max(scores[:-1])
