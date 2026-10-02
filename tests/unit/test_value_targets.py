@@ -119,3 +119,20 @@ def test_parallel_games_match_whatever_the_worker_count() -> None:
     two = train_simple.run_games(jobs, {"net": net}, workers=2)
     three = train_simple.run_games(jobs, {"net": net}, workers=3)
     assert [(w, t) for w, t, _ in two] == [(w, t) for w, t, _ in three]
+
+
+def test_worker_networks_keep_the_parents_mode() -> None:
+    torch = pytest.importorskip("torch")
+    probe = MCTSAgent(player_id=0, simulations=1, simulation_time=0.01)
+    size = len(probe.action_space.action_to_id)
+    torch.manual_seed(0)
+    net = train_simple.build_simple_network(action_space_size=size)
+    ref = train_simple.build_simple_network(action_space_size=size).eval()
+    train_simple._init_worker(
+        size,
+        {"net": net.state_dict(), "ref": ref.state_dict()},
+        {"net": net.training, "ref": ref.training},
+    )
+    assert train_simple._WORKER_NETS["net"].training is True
+    assert train_simple._WORKER_NETS["ref"].training is False
+    torch.set_num_threads(2)

@@ -225,7 +225,9 @@ _WORKER_NETS: Dict[str, PolicyValueNetwork] = {}
 
 
 def _init_worker(
-    action_space_size: int, state_dicts: Dict[str, Dict[str, torch.Tensor]]
+    action_space_size: int,
+    state_dicts: Dict[str, Dict[str, torch.Tensor]],
+    training: Dict[str, bool],
 ) -> None:
     # One core per worker: the speedup comes from games running side by
     # side, not from torch threads fighting over the same cores.
@@ -233,7 +235,10 @@ def _init_worker(
     for name, state_dict in state_dicts.items():
         net = build_simple_network(action_space_size=action_space_size)
         net.load_state_dict(state_dict)
-        net.eval()
+        # Match the parent's train/eval mode: the network has dropout, and
+        # search in the main process runs with whatever mode the network
+        # is in. Forcing eval here made parallel games differ from inline.
+        net.train(training[name])
         _WORKER_NETS[name] = net
 
 
@@ -263,7 +268,11 @@ def run_games(
     with ctx.Pool(
         min(workers, len(jobs)),
         initializer=_init_worker,
-        initargs=(size, state_dicts),
+        initargs=(
+            size,
+            state_dicts,
+            {name: net.training for name, net in nets.items()},
+        ),
     ) as pool:
         return pool.map(_worker_play, jobs, chunksize=1)
 
