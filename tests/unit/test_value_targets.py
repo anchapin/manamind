@@ -136,3 +136,19 @@ def test_worker_networks_keep_the_parents_mode() -> None:
     assert train_simple._WORKER_NETS["net"].training is True
     assert train_simple._WORKER_NETS["ref"].training is False
     torch.set_num_threads(2)
+
+
+def test_worker_count_does_not_change_the_games() -> None:
+    torch = pytest.importorskip("torch")
+    probe = MCTSAgent(player_id=0, simulations=1, simulation_time=0.01)
+    size = len(probe.action_space.action_to_id)
+    torch.manual_seed(0)
+    net = train_simple.build_simple_network(action_space_size=size)
+    jobs = [
+        train_simple.GameJob("random", 500 + g, seat=g % 2, simulations=2)
+        for g in range(2)
+    ]
+    inline = train_simple.run_games(jobs, {"net": net}, 1)
+    pooled = train_simple.run_games(jobs, {"net": net}, 2)
+    assert [(w, t) for w, t, _ in inline] == [(w, t) for w, t, _ in pooled]
+    torch.set_num_threads(2)

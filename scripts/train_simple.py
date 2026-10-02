@@ -254,11 +254,13 @@ def run_games(
     """Play ``jobs`` in order, or across ``workers`` processes.
 
     Games are independent, so they parallelise cleanly; the two seats of
-    one game cannot, because they move in turn. ``workers`` 1 runs inline
-    and reproduces the serial runs from before this option existed.
+    one game cannot, because they move in turn. Every game reseeds from
+    its own job seed, inline too, so any worker count plays exactly the
+    same games. (Runs from before this change used one shared RNG stream
+    and won't reproduce bit for bit.)
     """
     if workers <= 1 or len(jobs) <= 1:
-        return [_play_job(job, nets, reseed=False) for job in jobs]
+        return [_play_job(job, nets, reseed=True) for job in jobs]
     state_dicts = {
         name: {k: v.detach().cpu() for k, v in net.state_dict().items()}
         for name, net in nets.items()
