@@ -13,6 +13,7 @@ the same curve.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 from dataclasses import dataclass
@@ -70,11 +71,15 @@ class IterationResult:
     mean_loss: float
     examples: int
     mean_turns: float
+    # Score against the frozen untrained network with the same search.
+    # None for runs from before this existed, or with --ref-eval-games 0.
+    ref_win_rate: Optional[float] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
             "iteration": self.iteration,
             "win_rate": self.win_rate,
+            "ref_win_rate": self.ref_win_rate,
             "mean_loss": self.mean_loss,
             "examples": self.examples,
             "mean_turns": self.mean_turns,
@@ -168,6 +173,50 @@ def evaluate(
                 deck_lists=known_deck_lists(),
             ),
             1 - seat: RandomAgent(1 - seat, seed=seed + game),
+        }
+        winner, _, _ = play_game(agents, seed=seed + game)
+        if winner == seat:
+            score += 1.0
+        elif winner is None:
+            score += 0.5
+    return score / games
+
+
+def evaluate_vs_reference(
+    network: PolicyValueNetwork,
+    reference: PolicyValueNetwork,
+    games: int,
+    simulations: int,
+    seed: int,
+    fpu_reduction: Optional[float] = None,
+    search: str = "puct",
+) -> float:
+    """Score against the same search driven by a frozen reference network.
+
+    Search alone beats RandomAgent most of the time before any training,
+    so that metric saturates. Here both seats search with identical
+    settings and only the networks differ, so a score above 0.5 is what
+    training added. Seats alternate, greedy play, draws count half.
+    """
+
+    def agent(pid: int, net: PolicyValueNetwork) -> MCTSAgent:
+        return MCTSAgent(
+            player_id=pid,
+            policy_network=net,
+            value_network=net,
+            simulations=simulations,
+            simulation_time=30.0,
+            fpu_reduction=fpu_reduction,
+            search=search,
+            deck_lists=known_deck_lists(),
+        )
+
+    score = 0.0
+    for game in range(games):
+        seat = game % 2
+        agents: Dict[int, object] = {
+            seat: agent(seat, network),
+            1 - seat: agent(1 - seat, reference),
         }
         winner, _, _ = play_game(agents, seed=seed + game)
         if winner == seat:
@@ -330,6 +379,7 @@ def train(
     resume: bool = False,
     search: str = "puct",
     value_mix: float = 0.0,
+    ref_eval_games: Optional[int] = None,
 ) -> List[IterationResult]:
     seed_everything(seed)
 
@@ -337,6 +387,9 @@ def train(
     action_space_size = len(probe.action_space.action_to_id)
 
     network = build_simple_network(action_space_size=action_space_size)
+    # Taken before any resume load, so a resumed run rebuilds the same
+    # untrained weights from the seed.
+    reference = copy.deepcopy(network).eval()
     optimizer = torch.optim.Adam(network.parameters(), lr=1e-3)
     loss_fn = PolicyValueLoss(value_weight=1.0, l2_reg=1e-4)
 
@@ -417,10 +470,25 @@ def train(
             fpu_reduction=fpu_reduction,
             search=search,
         )
+        n_ref = eval_games if ref_eval_games is None else ref_eval_games
+        ref_win_rate = (
+            evaluate_vs_reference(
+                network,
+                reference,
+                games=n_ref,
+                simulations=simulations,
+                seed=seed * 104729 + iteration,
+                fpu_reduction=fpu_reduction,
+                search=search,
+            )
+            if n_ref > 0
+            else None
+        )
 
         result = IterationResult(
             iteration=iteration,
             win_rate=win_rate,
+            ref_win_rate=ref_win_rate,
             mean_loss=float(np.mean(losses)) if losses else float("nan"),
             examples=len(buffer),
             mean_turns=float(np.mean(turns)),
@@ -456,7 +524,12 @@ def train(
             )
         print(
             f"iter {iteration:>2}  win_rate {win_rate:.3f}  "
-            f"loss {result.mean_loss:.4f}  examples {len(buffer)}  "
+            + (
+                f"vs_untrained {ref_win_rate:.3f}  "
+                if ref_win_rate is not None
+                else ""
+            )
+            + f"loss {result.mean_loss:.4f}  examples {len(buffer)}  "
             f"mean_turns {result.mean_turns:.1f}",
             flush=True,
         )
@@ -511,6 +584,13 @@ def main() -> None:
         "the game result (0 = result only, the AlphaZero default)",
     )
     parser.add_argument(
+        "--ref-eval-games",
+        type=int,
+        default=None,
+        help="games per iteration against the frozen untrained network "
+        "with the same search (default: --eval-games; 0 to skip)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -530,6 +610,7 @@ def main() -> None:
         resume=args.resume,
         search=args.search,
         value_mix=args.value_mix,
+        ref_eval_games=args.ref_eval_games,
     )
 
 
