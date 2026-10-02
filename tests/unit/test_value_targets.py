@@ -99,3 +99,23 @@ def test_identical_networks_score_even() -> None:
         net, copy.deepcopy(net), games=2, simulations=4, seed=0
     )
     assert 0.0 <= score <= 1.0
+
+
+def test_parallel_games_match_whatever_the_worker_count() -> None:
+    """Each parallel game seeds itself, so 2 or 3 workers agree."""
+    scripts = str(_SCRIPT.parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    torch = pytest.importorskip("torch")
+    probe = MCTSAgent(player_id=0, simulations=1, simulation_time=0.01)
+    torch.manual_seed(0)
+    net = train_simple.build_simple_network(
+        action_space_size=len(probe.action_space.action_to_id)
+    )
+    jobs = [
+        train_simple.GameJob("random", 50 + g, g % 2, simulations=2)
+        for g in range(3)
+    ]
+    two = train_simple.run_games(jobs, {"net": net}, workers=2)
+    three = train_simple.run_games(jobs, {"net": net}, workers=3)
+    assert [(w, t) for w, t, _ in two] == [(w, t) for w, t, _ in three]
