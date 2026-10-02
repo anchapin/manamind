@@ -59,6 +59,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+export = [
+    # Embeddable inference for host engines like planar-nexus (#46)
+    "onnx>=1.15.0",
+    "onnxruntime>=1.17.0",
+]
 dev = [
     # Testing
     "pytest>=7.4.0",
@@ -66,6 +71,8 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
     "pytest-xdist>=3.3.0",  # Parallel testing
+    "onnx>=1.15.0",  # ONNX export parity tests (#46)
+    "onnxruntime>=1.17.0",
     
     # Code Quality
     "black>=23.0.0",
