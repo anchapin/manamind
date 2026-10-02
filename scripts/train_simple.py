@@ -79,6 +79,19 @@ class IterationResult:
     # Score against the frozen --anchor checkpoint; None on iterations
     # without an anchor check.
     anchor_score: Optional[float] = None
+    # Training diagnostics (#49); None for runs from before they existed.
+    lr: Optional[float] = None
+    grad_norm: Optional[float] = None
+    # Average times each buffer example was sampled this iteration.
+    samples_per_example: Optional[float] = None
+    # Share of decisive self-play games won by player 0.
+    selfplay_p0_rate: Optional[float] = None
+    # Network outputs on a fixed probe set of early self-play positions.
+    probe_entropy: Optional[float] = None
+    probe_value_mean: Optional[float] = None
+    probe_value_std: Optional[float] = None
+    probe_value_mse: Optional[float] = None
+    probe_saturated: Optional[float] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -89,6 +102,15 @@ class IterationResult:
             "mean_loss": self.mean_loss,
             "examples": self.examples,
             "mean_turns": self.mean_turns,
+            "lr": self.lr,
+            "grad_norm": self.grad_norm,
+            "samples_per_example": self.samples_per_example,
+            "selfplay_p0_rate": self.selfplay_p0_rate,
+            "probe_entropy": self.probe_entropy,
+            "probe_value_mean": self.probe_value_mean,
+            "probe_value_std": self.probe_value_std,
+            "probe_value_mse": self.probe_value_mse,
+            "probe_saturated": self.probe_saturated,
         }
 
 
@@ -384,6 +406,7 @@ def train_on_buffer(
     buffer: List[Example],
     batch_size: int = 32,
     epochs: int = 8,
+    grad_norms: Optional[List[float]] = None,
 ) -> List[float]:
     if len(buffer) < batch_size:
         return []
@@ -415,11 +438,77 @@ def train_on_buffer(
         )
         optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0)
+        norm = torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0)
+        if grad_norms is not None:
+            grad_norms.append(float(norm))
         optimizer.step()
         losses.append(float(total_loss.detach()))
 
     return losses
+
+
+def lr_at(
+    iteration: int,
+    iterations: int,
+    lr: float,
+    lr_min: float = 1e-4,
+    schedule: str = "constant",
+) -> float:
+    """Learning rate for ``iteration`` (1-based) of ``iterations``.
+
+    ``cosine`` anneals from ``lr`` at iteration 1 to ``lr_min`` at the
+    last; it depends only on the iteration, so ``--resume`` picks it up.
+    """
+    if schedule == "constant" or iterations <= 1:
+        return lr
+    if schedule != "cosine":
+        raise ValueError(f"unknown lr schedule {schedule!r}")
+    progress = min(max(iteration - 1, 0), iterations - 1) / (iterations - 1)
+    return lr_min + 0.5 * (lr - lr_min) * (1.0 + math.cos(math.pi * progress))
+
+
+def build_probe(
+    examples: List[Example], size: int, seed: int
+) -> List[Example]:
+    """A fixed sample of positions to track the network's outputs on.
+
+    Uses its own RNG so building it leaves the training streams alone.
+    """
+    if size <= 0 or not examples:
+        return []
+    picker = random.Random(seed)
+    return picker.sample(examples, min(size, len(examples)))
+
+
+def probe_stats(
+    network: PolicyValueNetwork, probe: List[Example]
+) -> Dict[str, float]:
+    """Policy entropy and value statistics on the probe positions.
+
+    A collapsing network usually shows it here first: entropy falling
+    toward 0 (a policy that stopped exploring) or values pinned near
+    +/-1 (an overconfident value head).
+    """
+    if not probe:
+        return {}
+    was_training = network.training
+    network.eval()
+    with torch.no_grad():
+        states = torch.stack([network.state_encoder(ex.state) for ex in probe])
+        logits, values = network(states)
+        log_p = torch.log_softmax(logits, dim=-1)
+        entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
+        v = values.view(-1)
+        targets = torch.tensor([ex.value for ex in probe], dtype=v.dtype)
+        stats = {
+            "probe_entropy": float(entropy),
+            "probe_value_mean": float(v.mean()),
+            "probe_value_std": float(v.std()) if v.numel() > 1 else 0.0,
+            "probe_value_mse": float(((v - targets) ** 2).mean()),
+            "probe_saturated": float((v.abs() > 0.95).float().mean()),
+        }
+    network.train(was_training)
+    return stats
 
 
 def save_checkpoint(
@@ -552,6 +641,13 @@ def train(
     anchor_games: int = 80,
     plateau: int = 0,
     plateau_tolerance: float = 0.05,
+    lr: float = 1e-3,
+    lr_schedule: str = "constant",
+    lr_min: float = 1e-4,
+    train_batches: int = 8,
+    batch_size: int = 32,
+    buffer_size: int = 20000,
+    probe_size: int = 256,
 ) -> List[IterationResult]:
     if plateau > 0 and anchor is None:
         raise ValueError("--plateau needs --anchor to measure progress")
@@ -565,11 +661,12 @@ def train(
     # Taken before any resume load, so a resumed run rebuilds the same
     # untrained weights from the seed.
     reference = copy.deepcopy(network).eval()
-    optimizer = torch.optim.Adam(network.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(network.parameters(), lr=lr)
     loss_fn = PolicyValueLoss(value_weight=1.0, l2_reg=1e-4)
 
     buffer: List[Example] = []
     results: List[IterationResult] = []
+    probe: List[Example] = []
     start = 1
 
     resume_from = latest_resumable(checkpoint_dir) if resume else None
@@ -586,6 +683,7 @@ def train(
         optimizer.load_state_dict(payload["optimizer"])
         state = payload["resume"]
         buffer = [Example(*item) for item in state["buffer"]]
+        probe = [Example(*item) for item in state.get("probe", [])]
         results = [IterationResult(**r) for r in state["results"]]
         baseline = state["baseline"]
         restore_rng_state(state["rng"])
@@ -611,10 +709,20 @@ def train(
     stopped_at: Optional[int] = None
 
     def extra() -> Dict[str, object]:
+        config: Dict[str, object] = {
+            "lr": lr,
+            "lr_schedule": lr_schedule,
+            "lr_min": lr_min,
+            "train_batches": train_batches,
+            "batch_size": batch_size,
+            "buffer_size": buffer_size,
+            "probe_size": probe_size,
+        }
         if anchor is None:
-            return {}
+            return config
         best = best_anchor(results)
         return {
+            **config,
             "anchor": str(anchor),
             "anchor_every": anchor_every,
             "anchor_games": anchor_games,
@@ -638,12 +746,31 @@ def train(
             )
             for game in range(games)
         ]
-        for _, length, examples in run_games(jobs, {"net": network}, workers):
+        decisive = []
+        for winner, length, examples in run_games(
+            jobs, {"net": network}, workers
+        ):
             buffer.extend(examples)
             turns.append(length)
+            if winner is not None:
+                decisive.append(winner == 0)
+        if not probe:
+            probe = build_probe(buffer, probe_size, seed * 31337)
 
-        buffer = buffer[-20000:]
-        losses = train_on_buffer(network, optimizer, loss_fn, buffer)
+        buffer = buffer[-buffer_size:]
+        current_lr = lr_at(iteration, iterations, lr, lr_min, lr_schedule)
+        for group in optimizer.param_groups:
+            group["lr"] = current_lr
+        grad_norms: List[float] = []
+        losses = train_on_buffer(
+            network,
+            optimizer,
+            loss_fn,
+            buffer,
+            batch_size=batch_size,
+            epochs=train_batches,
+            grad_norms=grad_norms,
+        )
         win_rate = evaluate(
             network,
             games=eval_games,
@@ -691,6 +818,13 @@ def train(
             mean_loss=float(np.mean(losses)) if losses else float("nan"),
             examples=len(buffer),
             mean_turns=float(np.mean(turns)),
+            lr=current_lr,
+            grad_norm=float(np.mean(grad_norms)) if grad_norms else None,
+            samples_per_example=(
+                len(losses) * batch_size / len(buffer) if buffer else None
+            ),
+            selfplay_p0_rate=(float(np.mean(decisive)) if decisive else None),
+            **probe_stats(network, probe),
         )
         results.append(result)
         scores = [
@@ -724,6 +858,7 @@ def train(
                 resume_state={
                     # plain tuples, so other scripts can load the file
                     "buffer": [(e.state, e.policy, e.value) for e in buffer],
+                    "probe": [(e.state, e.policy, e.value) for e in probe],
                     "results": [r.as_dict() for r in results],
                     "baseline": baseline,
                     "rng": rng_state(),
@@ -740,6 +875,16 @@ def train(
             f"mean_turns {result.mean_turns:.1f}",
             flush=True,
         )
+        if result.probe_entropy is not None:
+            print(
+                f"         lr {current_lr:.2e}  grad_norm "
+                f"{result.grad_norm or 0.0:.3f}  entropy "
+                f"{result.probe_entropy:.3f}  value "
+                f"{result.probe_value_mean:+.3f}"
+                f"\u00b1{result.probe_value_std:.3f}  "
+                f"saturated {result.probe_saturated:.2f}",
+                flush=True,
+            )
         if anchor_score is not None:
             lo, hi = wilson_interval(anchor_score, anchor_games)
             best = best_anchor(results)
@@ -868,6 +1013,44 @@ def main() -> None:
         "count as keeping pace",
     )
     parser.add_argument(
+        "--lr", type=float, default=1e-3, help="Adam learning rate"
+    )
+    parser.add_argument(
+        "--lr-schedule",
+        choices=("constant", "cosine"),
+        default="constant",
+        help="constant (default) or cosine decay from --lr to --lr-min "
+        "over --iterations",
+    )
+    parser.add_argument(
+        "--lr-min",
+        type=float,
+        default=1e-4,
+        help="final learning rate for --lr-schedule cosine",
+    )
+    parser.add_argument(
+        "--train-batches",
+        type=int,
+        default=8,
+        help="gradient steps per iteration",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=32, help="examples per step"
+    )
+    parser.add_argument(
+        "--buffer-size",
+        type=int,
+        default=20000,
+        help="replay buffer cap (newest examples kept)",
+    )
+    parser.add_argument(
+        "--probe-size",
+        type=int,
+        default=256,
+        help="fixed iteration-1 positions to log policy entropy and value "
+        "stats on each iteration (0 to skip)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from the newest resumable checkpoint in "
@@ -894,6 +1077,13 @@ def main() -> None:
         anchor_games=args.anchor_games,
         plateau=args.plateau,
         plateau_tolerance=args.plateau_tol,
+        lr=args.lr,
+        lr_schedule=args.lr_schedule,
+        lr_min=args.lr_min,
+        train_batches=args.train_batches,
+        batch_size=args.batch_size,
+        buffer_size=args.buffer_size,
+        probe_size=args.probe_size,
     )
 
 
