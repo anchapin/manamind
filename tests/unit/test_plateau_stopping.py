@@ -20,8 +20,32 @@ def test_no_plateau_without_enough_checks() -> None:
     assert not train_simple.plateau_reached([0.2, 0.1, 0.1], 3)
 
 
-def test_plateau_when_recent_checks_never_beat_the_best() -> None:
-    assert train_simple.plateau_reached([0.2, 0.5, 0.4, 0.5, 0.3], 3)
+def test_plateau_when_recent_checks_all_fall_below_the_best() -> None:
+    # seed1_p50 on #39: 0.475 at iter 40, then a collapse.
+    assert train_simple.plateau_reached([0.2, 0.475, 0.15, 0.025, 0.1], 3)
+
+
+def test_a_tie_with_the_best_keeps_the_run_going() -> None:
+    assert not train_simple.plateau_reached([0.2, 0.5, 0.4, 0.5, 0.3], 3)
+
+
+def test_a_check_within_tolerance_keeps_the_run_going() -> None:
+    # seed2_p50 on #39 stopped at iter 30 under the old rule.
+    scores = [0.0, 0.15, 0.325, 0.225, 0.3, 0.15]
+    assert not train_simple.plateau_reached(scores, 3, 0.05)
+    assert train_simple.plateau_reached(scores, 3, 0.0)
+
+
+def test_a_flat_run_does_not_stop() -> None:
+    assert not train_simple.plateau_reached([0.4] * 8, 3, 0.05)
+
+
+def test_seed_runs_from_issue_39_with_the_new_defaults() -> None:
+    seed0 = [0.1, 0.025, 0.15, 0.45, 0.15, 0.425, 0.475, 0.425, 0.35, 0.5]
+    seed2 = [0.0, 0.15, 0.325, 0.225, 0.325, 0.15]
+    for scores in (seed0, seed2):
+        for n in range(1, len(scores) + 1):
+            assert not train_simple.plateau_reached(scores[:n], 4, 0.05)
 
 
 def test_no_plateau_while_still_improving() -> None:
@@ -94,10 +118,10 @@ def test_anchor_run_writes_scores_and_best(tmp_path: Path) -> None:
     assert all(s is not None for s in scores)
     assert payload["best_anchor_score"] == max(scores)
     assert (ckpt / "best.pt").exists()
-    # A plateau of 1 stops at the first check that doesn't improve; that
-    # can be the last iteration, so stopped_at may equal the cap.
+    # A plateau of 1 stops at the first check that falls more than the
+    # tolerance below the best; that can be the last iteration.
     if payload["stopped_at"] is None:
         assert len(results) == 3
     else:
         assert payload["stopped_at"] == len(results) <= 3
-        assert scores[-1] <= max(scores[:-1])
+        assert scores[-1] < max(scores[:-1]) - payload["plateau_tolerance"]
