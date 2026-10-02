@@ -19,6 +19,10 @@ on:
         type: choice
         options: [puct, gumbel]
         default: puct
+      a_ckpt:
+        description: "Checkpoint file in A's checkpoints dir (e.g. best.pt, iter_040.pt); 'latest' = newest iter_*.pt"
+        required: true
+        default: "latest"
       b_run:
         description: "Run name B"
         required: true
@@ -28,6 +32,10 @@ on:
         type: choice
         options: [puct, gumbel]
         default: gumbel
+      b_ckpt:
+        description: "Checkpoint file for B; 'latest' = newest iter_*.pt"
+        required: true
+        default: "latest"
       games:
         description: "Games (even; each deal is played with seats swapped)"
         required: true
@@ -47,6 +55,8 @@ jobs:
     env:
       A_RUN: ${{ github.event.inputs.a_run }}
       B_RUN: ${{ github.event.inputs.b_run }}
+      A_CKPT: ${{ github.event.inputs.a_ckpt }}
+      B_CKPT: ${{ github.event.inputs.b_ckpt }}
       A_SEARCH: ${{ github.event.inputs.a_search }}
       B_SEARCH: ${{ github.event.inputs.b_search }}
       GAMES: ${{ github.event.inputs.games }}
@@ -64,8 +74,15 @@ jobs:
             [[ "$v" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run name: $v"; exit 1; }
           done
           [[ "$GAMES" =~ ^[0-9]+$ && "$SIMS" =~ ^[0-9]+$ ]] || { echo "games/simulations must be numbers"; exit 1; }
+          for v in "$A_CKPT" "$B_CKPT"; do
+            [[ "$v" == latest || "$v" =~ ^[A-Za-z0-9._-]+\.pt$ ]] || { echo "bad checkpoint name: $v"; exit 1; }
+          done
           for v in "$A_RUN" "$B_RUN"; do
             ls "$HOME/manamind-runs/$v/checkpoints"/iter_*.pt >/dev/null || { echo "no checkpoints for $v"; exit 1; }
+          done
+          for pair in "$A_RUN:$A_CKPT" "$B_RUN:$B_CKPT"; do
+            run="${pair%%:*}"; ck="${pair#*:}"
+            [ "$ck" = latest ] || [ -f "$HOME/manamind-runs/$run/checkpoints/$ck" ] || { echo "no $ck for $run"; exit 1; }
           done
 
       - name: Python environment (one cached venv per runner instance)
@@ -77,13 +94,14 @@ jobs:
           "$VENV/bin/pip" install -q -e .
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
-      - name: Play the match (latest checkpoint of each run)
+      - name: Play the match (chosen checkpoint of each run)
         run: |
+          pick() { [ "$2" = latest ] && echo "$HOME/manamind-runs/$1/checkpoints" || echo "$HOME/manamind-runs/$1/checkpoints/$2"; }
           mkdir -p results
           OUT="results/h2h_${A_RUN}_vs_${B_RUN}"
           PYTHONPATH=src python scripts/head_to_head.py \
-            --a "$HOME/manamind-runs/$A_RUN/checkpoints" --a-search "$A_SEARCH" \
-            --b "$HOME/manamind-runs/$B_RUN/checkpoints" --b-search "$B_SEARCH" \
+            --a "$(pick "$A_RUN" "$A_CKPT")" --a-search "$A_SEARCH" \
+            --b "$(pick "$B_RUN" "$B_CKPT")" --b-search "$B_SEARCH" \
             --games "$GAMES" --simulations "$SIMS" \
             --out "$OUT.json" 2>&1 | tee "$OUT.log"
 
