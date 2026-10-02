@@ -1,0 +1,86 @@
+# Strength/latency per difficulty setting for one trained checkpoint (#46),
+# on Alex's PC (self-hosted runner labelled "manamind-train"). Manual
+# dispatch only: nothing here fires on pushes or pull requests.
+name: Difficulty table on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch with scripts/difficulty_table.py"
+        required: true
+        default: "main"
+      run:
+        description: "Run name (uses ~/manamind-runs/<run>/checkpoints)"
+        required: true
+        default: "seed0_p4"
+      ckpt:
+        description: "Checkpoint file (e.g. best.pt, iter_040.pt); 'latest' = newest iter_*.pt"
+        required: true
+        default: "best.pt"
+      games:
+        description: "Games per cell (even; each deal is played from both seats)"
+        required: true
+        default: "40"
+      ref_simulations:
+        description: "Simulations for the full-strength reference opponent"
+        required: true
+        default: "40"
+
+permissions:
+  contents: read
+
+jobs:
+  table:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 720
+    env:
+      RUN: ${{ github.event.inputs.run }}
+      CKPT: ${{ github.event.inputs.ckpt }}
+      GAMES: ${{ github.event.inputs.games }}
+      REF_SIMS: ${{ github.event.inputs.ref_simulations }}
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Validate inputs
+        run: |
+          [[ "$RUN" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run name: $RUN"; exit 1; }
+          [[ "$CKPT" == latest || "$CKPT" =~ ^[A-Za-z0-9._-]+\.pt$ ]] || { echo "bad checkpoint name: $CKPT"; exit 1; }
+          [[ "$GAMES" =~ ^[0-9]+$ && "$REF_SIMS" =~ ^[0-9]+$ ]] || { echo "games/ref_simulations must be numbers"; exit 1; }
+          (( GAMES % 2 == 0 )) || { echo "games must be even"; exit 1; }
+          DIR="$HOME/manamind-runs/$RUN/checkpoints"
+          if [ "$CKPT" = latest ]; then
+            P="$(ls "$DIR"/iter_*.pt 2>/dev/null | sort | tail -1)"
+          else
+            P="$DIR/$CKPT"
+          fi
+          [ -f "$P" ] || { echo "no checkpoint at $P"; exit 1; }
+          echo "CKPT_PATH=$P" >> "$GITHUB_ENV"
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e ".[export]"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Build the table
+        run: |
+          mkdir -p results
+          OUT="results/difficulty_${RUN}_${CKPT%.pt}"
+          PYTHONPATH=src python scripts/difficulty_table.py "$CKPT_PATH" \
+            --games "$GAMES" --ref-simulations "$REF_SIMS" \
+            --out "$OUT.json" 2>&1 | tee "$OUT.log"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: difficulty-${{ github.event.inputs.run }}
+          path: results/difficulty_*
