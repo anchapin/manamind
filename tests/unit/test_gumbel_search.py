@@ -106,3 +106,36 @@ def test_network_prior_drives_the_root_with_noise_off() -> None:
     agent.select_action(create_standard_game_start())
     assert agent._last_gumbel_policy is not None
     assert sum(p for _, p in agent._last_gumbel_policy) == pytest.approx(1.0)
+
+
+def test_first_visit_evaluates_the_child_not_a_grandchild() -> None:
+    """Issue #58: a root child's one-visit Q must be the value of the child
+    position itself, not of "child action, then pass priority"."""
+    agent, _, _ = _two_choice_agent(simulations=1)
+    evaluated = []
+    real = agent._evaluate_position
+
+    def recording(state: Any) -> float:
+        evaluated.append(id(state))
+        return float(real(state))
+
+    agent._evaluate_position = recording  # type: ignore[method-assign]
+    agent.select_action(create_standard_game_start())
+    root = agent._last_root
+    assert root is not None
+    visited = [c for _, c in root.children if c.visits]
+    assert len(visited) == 1
+    child = visited[0]
+    assert child.visits == 1
+    assert child.children == []
+    assert id(child.game_state) in evaluated
+
+
+def test_second_visit_expands_below_the_child() -> None:
+    agent, _, _ = _two_choice_agent(simulations=6)
+    agent.select_action(create_standard_game_start())
+    root = agent._last_root
+    assert root is not None
+    visited = [c for _, c in root.children if c.visits > 1]
+    assert visited
+    assert all(c.children or c.is_terminal() for c in visited)

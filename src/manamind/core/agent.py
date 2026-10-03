@@ -414,9 +414,21 @@ class MCTSAgent(Agent):
         )
 
     def _simulate_from(self, root: MCTSNode, child: MCTSNode) -> None:
-        """Run one simulation that starts by taking ``child`` at the root."""
+        """Run one simulation that starts by taking ``child`` at the root.
+
+        A root child that has never been visited is evaluated itself, as in
+        AlphaZero. Expanding it straight away evaluated a grandchild instead,
+        and since ``expand()`` pops the last legal action (always
+        ``PASS_PRIORITY``), a one-visit Q meant "this action, then pass".
+        That put visited children on a different footing from the
+        unvisited ones, whose completed value is anchored on the root
+        evaluation, and made low-budget search lose to random (#58).
+        """
         node = child
         path = [root, child]
+        if child.visits == 0:
+            self._backup_path(path, self._evaluate_position(child.game_state))
+            return
         while (
             not node.is_terminal()
             and node.is_fully_expanded()
