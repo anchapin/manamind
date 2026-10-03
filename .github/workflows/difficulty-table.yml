@@ -27,7 +27,7 @@ on:
         required: true
         default: "40"
       settings:
-        description: "Comma-separated specs (sims=N/blunder=P/temp=T, or policy), 'ladder', or 'default'"
+        description: "Comma-separated specs (sims=N/blunder=P/temp=T, or policy), 'ladder', 'default', or 'diag-first-visit'"
         required: true
         default: "default"
 
@@ -81,6 +81,13 @@ jobs:
           mkdir -p results
           TAG="${SETTINGS//[^A-Za-z0-9]/}"; TAG="${TAG:0:24}"
           OUT="results/difficulty_${RUN}_${CKPT%.pt}_${TAG}"
+          if [ "$SETTINGS" = diag-first-visit ]; then
+            # #58: value-head check, not a strength table.
+            PYTHONPATH=src python scripts/diag_first_visit.py "$CKPT_PATH" \
+              --games "$GAMES" --simulations "$REF_SIMS" \
+              --out "$OUT.json" 2>&1 | tee "$OUT.log"
+            exit 0
+          fi
           EXTRA=()
           [ "$SETTINGS" = default ] || EXTRA=(--settings "$SETTINGS")
           PYTHONPATH=src python scripts/difficulty_table.py "$CKPT_PATH" \
