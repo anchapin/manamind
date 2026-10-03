@@ -642,7 +642,7 @@ def train(
     plateau: int = 0,
     plateau_tolerance: float = 0.05,
     lr: float = 1e-3,
-    lr_schedule: str = "constant",
+    lr_schedule: str = "cosine",
     lr_min: float = 1e-4,
     train_batches: int = 8,
     batch_size: int = 32,
@@ -1018,9 +1018,9 @@ def main() -> None:
     parser.add_argument(
         "--lr-schedule",
         choices=("constant", "cosine"),
-        default="constant",
-        help="constant (default) or cosine decay from --lr to --lr-min "
-        "over --iterations",
+        default="cosine",
+        help="cosine (default) decays from --lr to --lr-min over "
+        "--iterations; constant keeps --lr (pre-#49 behaviour)",
     )
     parser.add_argument(
         "--lr-min",

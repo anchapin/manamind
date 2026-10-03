@@ -149,3 +149,12 @@ def test_resume_keeps_the_probe(tmp_path: Path) -> None:
     assert resumed[-1].probe_entropy == pytest.approx(
         straight[-1].probe_entropy
     )
+
+
+def test_cosine_is_the_default_schedule() -> None:
+    import inspect
+
+    assert (
+        inspect.signature(train_simple.train).parameters["lr_schedule"].default
+        == "cosine"
+    )
