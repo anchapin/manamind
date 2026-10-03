@@ -9,11 +9,16 @@ its score with a 95% CI and milliseconds per real decision (moves with
 more than one legal option).
 
     python scripts/difficulty_table.py CHECKPOINT [--games 40]
-        [--ref-simulations 40] [--out table.json]
+        [--ref-simulations 40] [--settings SPEC,...] [--out table.json]
+
+A setting spec is ``sims=N``, ``blunder=P`` and ``temp=T`` joined by ``/``,
+e.g. ``sims=1/blunder=0.25`` or ``temp=1.0``; ``policy`` is greedy
+policy-only. ``--settings ladder`` runs the sims ladder from LADDER.
 """
 
 import argparse
 import json
+import random
 import sys
 import tempfile
 import time
@@ -59,6 +64,53 @@ DEFAULT_SETTINGS: List[Setting] = [
 ]
 
 
+LADDER: List[Setting] = [
+    Setting("search, 1 sim, blunder 25%", blunder_rate=0.25, simulations=1),
+    Setting("search, 1 sim", simulations=1),
+    Setting("search, 2 sims", simulations=2),
+    Setting("search, 5 sims", simulations=5),
+    Setting("search, 10 sims", simulations=10),
+    Setting("search, 20 sims", simulations=20),
+]
+
+
+def parse_setting(spec: str) -> Setting:
+    """Parse ``sims=5/blunder=0.1/temp=1.0`` (any subset) or ``policy``."""
+    values: Dict[str, float] = {"sims": 0, "blunder": 0.0, "temp": 0.0}
+    if spec.strip() != "policy":
+        for part in spec.split("/"):
+            key, sep, raw = part.partition("=")
+            key = key.strip()
+            if not sep or key not in values:
+                raise ValueError(f"bad setting part {part!r} in {spec!r}")
+            values[key] = float(raw)
+    sims = int(values["sims"])
+    if sims < 0 or not 0.0 <= values["blunder"] <= 1.0 or values["temp"] < 0:
+        raise ValueError(f"out-of-range setting {spec!r}")
+    kind = (
+        f"search, {sims} sim{'s' if sims != 1 else ''}" if sims else "policy"
+    )
+    extras = []
+    if values["blunder"]:
+        extras.append(f"blunder {values['blunder']:.0%}")
+    if values["temp"]:
+        extras.append(f"T={values['temp']:g}")
+    name = (
+        ", ".join([kind] + extras)
+        if extras
+        else (kind if sims else "policy, greedy")
+    )
+    return Setting(name, values["temp"], values["blunder"], sims)
+
+
+def parse_settings(arg: Optional[str]) -> List[Setting]:
+    if not arg:
+        return DEFAULT_SETTINGS
+    if arg.strip() == "ladder":
+        return LADDER
+    return [parse_setting(s) for s in arg.split(",") if s.strip()]
+
+
 class Timed:
     """Times an agent's real decisions (more than one legal move)."""
 
@@ -88,7 +140,7 @@ def make_agent(setting: Setting, pid: int, net, model_dir: Path, seed: int):
             blunder_rate=setting.blunder_rate,
             seed=seed,
         )
-    return MCTSAgent(
+    agent = MCTSAgent(
         player_id=pid,
         policy_network=net,
         value_network=net,
@@ -97,6 +149,25 @@ def make_agent(setting: Setting, pid: int, net, model_dir: Path, seed: int):
         deck_lists=known_deck_lists(),
         search="gumbel",
     )
+    if setting.blunder_rate > 0:
+        return Blundering(agent, setting.blunder_rate, seed)
+    return agent
+
+
+class Blundering:
+    """Replaces a search agent's move with a random legal one at a rate."""
+
+    def __init__(self, agent, rate: float, seed: int):
+        self.agent = agent
+        self.rate = rate
+        self._rng = random.Random(seed)
+        self._space = ActionSpace()
+
+    def select_action(self, state):
+        legal = self._space.get_legal_actions(state)
+        if len(legal) > 1 and self._rng.random() < self.rate:
+            return self._rng.choice(legal)
+        return self.agent.select_action(state)
 
 
 def score_setting(
@@ -199,12 +270,25 @@ def main() -> None:
     parser.add_argument("--games", type=int, default=40)
     parser.add_argument("--ref-simulations", type=int, default=40)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--settings",
+        default=None,
+        help="comma-separated specs, or 'ladder' (default: built-in set)",
+    )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     if args.games % 2:
         parser.error("--games must be even (each deal is played twice)")
+    try:
+        settings = parse_settings(args.settings)
+    except ValueError as exc:
+        parser.error(str(exc))
     table = build_table(
-        args.checkpoint, args.games, args.ref_simulations, seed=args.seed
+        args.checkpoint,
+        args.games,
+        args.ref_simulations,
+        settings=settings,
+        seed=args.seed,
     )
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)

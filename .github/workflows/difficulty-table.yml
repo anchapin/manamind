@@ -26,6 +26,10 @@ on:
         description: "Simulations for the full-strength reference opponent"
         required: true
         default: "40"
+      settings:
+        description: "Comma-separated specs (sims=N/blunder=P/temp=T, or policy), 'ladder', or 'default'"
+        required: true
+        default: "default"
 
 permissions:
   contents: read
@@ -39,6 +43,7 @@ jobs:
       CKPT: ${{ github.event.inputs.ckpt }}
       GAMES: ${{ github.event.inputs.games }}
       REF_SIMS: ${{ github.event.inputs.ref_simulations }}
+      SETTINGS: ${{ github.event.inputs.settings }}
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
     steps:
@@ -52,6 +57,7 @@ jobs:
           [[ "$CKPT" == latest || "$CKPT" =~ ^[A-Za-z0-9._-]+\.pt$ ]] || { echo "bad checkpoint name: $CKPT"; exit 1; }
           [[ "$GAMES" =~ ^[0-9]+$ && "$REF_SIMS" =~ ^[0-9]+$ ]] || { echo "games/ref_simulations must be numbers"; exit 1; }
           (( GAMES % 2 == 0 )) || { echo "games must be even"; exit 1; }
+          [[ "$SETTINGS" =~ ^[A-Za-z0-9.,=/_-]+$ ]] || { echo "bad settings: $SETTINGS"; exit 1; }
           DIR="$HOME/manamind-runs/$RUN/checkpoints"
           if [ "$CKPT" = latest ]; then
             P="$(ls "$DIR"/iter_*.pt 2>/dev/null | sort | tail -1)"
@@ -73,9 +79,12 @@ jobs:
       - name: Build the table
         run: |
           mkdir -p results
-          OUT="results/difficulty_${RUN}_${CKPT%.pt}"
+          TAG="${SETTINGS//[^A-Za-z0-9]/}"; TAG="${TAG:0:24}"
+          OUT="results/difficulty_${RUN}_${CKPT%.pt}_${TAG}"
+          EXTRA=()
+          [ "$SETTINGS" = default ] || EXTRA=(--settings "$SETTINGS")
           PYTHONPATH=src python scripts/difficulty_table.py "$CKPT_PATH" \
-            --games "$GAMES" --ref-simulations "$REF_SIMS" \
+            --games "$GAMES" --ref-simulations "$REF_SIMS" "${EXTRA[@]}" \
             --out "$OUT.json" 2>&1 | tee "$OUT.log"
 
       - name: Upload results
