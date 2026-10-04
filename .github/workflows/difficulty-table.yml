@@ -77,7 +77,10 @@ jobs:
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
       - name: Build the table
+        # pipefail: a crashed run must not hide behind tee's exit code.
+        shell: bash
         run: |
+          set -o pipefail
           mkdir -p results
           TAG="${SETTINGS//[^A-Za-z0-9]/}"; TAG="${TAG:0:24}"
           OUT="results/difficulty_${RUN}_${CKPT%.pt}_${TAG}"

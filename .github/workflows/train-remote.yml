@@ -56,7 +56,11 @@ jobs:
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
       - name: Train (resumes if this run name already has checkpoints)
+        # Without pipefail, `python ... | tee` reports the exit code of tee,
+        # so a killed or crashed trainer still shows as a green step.
+        shell: bash
         run: |
+          set -o pipefail
           RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
           mkdir -p "$RUN_DIR" results
           read -r -a EXTRA <<< "$TRAIN_ARGS"

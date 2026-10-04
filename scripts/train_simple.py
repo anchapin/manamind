@@ -95,6 +95,16 @@ class IterationResult:
     # Anchor score of the EMA weights (#57); None without --ema-decay or
     # on iterations without an anchor check.
     ema_anchor_score: Optional[float] = None
+    # Truncation audit (#54): games that hit MAX_STEPS with no winner.
+    # None for runs from before this existed.
+    selfplay_truncated: Optional[int] = None
+    eval_truncated: Optional[int] = None
+    ref_truncated: Optional[int] = None
+    anchor_truncated: Optional[int] = None
+    # Share of this iteration's new examples with a zero value target,
+    # and the share that came from truncated games.
+    value_zero_share: Optional[float] = None
+    value_truncated_share: Optional[float] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -115,6 +125,12 @@ class IterationResult:
             "probe_value_mse": self.probe_value_mse,
             "probe_saturated": self.probe_saturated,
             "ema_anchor_score": self.ema_anchor_score,
+            "selfplay_truncated": self.selfplay_truncated,
+            "eval_truncated": self.eval_truncated,
+            "ref_truncated": self.ref_truncated,
+            "anchor_truncated": self.anchor_truncated,
+            "value_zero_share": self.value_zero_share,
+            "value_truncated_share": self.value_truncated_share,
         }
 
 
@@ -163,6 +179,12 @@ def plateau_reached(
     return all(s < best_before - tolerance for s in scores[-patience:])
 
 
+TRUNCATED_VALUE_MODES = ("draw", "bootstrap")
+
+# winner, turns, examples, truncated
+Outcome = Tuple[Optional[int], int, List[Example], bool]
+
+
 def play_game(
     agents: Dict[int, object],
     seed: int,
@@ -170,6 +192,28 @@ def play_game(
     value_mix: float = 0.0,
 ) -> Tuple[Optional[int], int, List[Example]]:
     """Play one simple-mode game. Returns winner, turns, examples."""
+    winner, turns, examples, _ = play_game_outcome(
+        agents, seed, record=record, value_mix=value_mix
+    )
+    return winner, turns, examples
+
+
+def play_game_outcome(
+    agents: Dict[int, object],
+    seed: int,
+    record: bool = False,
+    value_mix: float = 0.0,
+    truncated_value: str = "draw",
+) -> Outcome:
+    """Play one game; also report whether it hit MAX_STEPS (#54).
+
+    A truncated game has no result, which is not the same as a draw.
+    ``truncated_value`` picks its value targets: "draw" keeps the old
+    z = 0 behaviour; "bootstrap" uses the root search value instead and
+    drops positions that have none. Policy targets are kept either way.
+    """
+    if truncated_value not in TRUNCATED_VALUE_MODES:
+        raise ValueError(f"unknown truncated_value {truncated_value!r}")
     state = create_simple_game_start(seed)
     history: List[Tuple[GameState, np.ndarray, int, Optional[float]]] = []
 
@@ -199,14 +243,20 @@ def play_game(
         state = action.execute(state)
 
     winner = state.winner()
+    truncated = not state.is_game_over()
     examples: List[Example] = []
     if record:
         for snapshot, policy, mover, q_root in history:
+            if truncated and truncated_value == "bootstrap":
+                if q_root is None:
+                    continue
+                examples.append(Example(snapshot, policy, float(q_root)))
+                continue
             z = 0.0 if winner is None else (1.0 if winner == mover else -1.0)
             examples.append(
                 Example(snapshot, policy, value_target(z, q_root, value_mix))
             )
-    return winner, state.turn_number, examples
+    return winner, state.turn_number, examples, truncated
 
 
 @dataclass
@@ -225,6 +275,7 @@ class GameJob:
     fpu_reduction: Optional[float] = None
     search: str = "puct"
     value_mix: float = 0.0
+    truncated_value: str = "draw"
 
 
 def _search_agent(
@@ -254,7 +305,7 @@ def _search_agent(
 
 def _play_job(
     job: GameJob, nets: Dict[str, PolicyValueNetwork], reseed: bool
-) -> Tuple[Optional[int], int, List[Example]]:
+) -> Outcome:
     if reseed:
         # Parallel games each get their own RNG stream, so a run gives
         # the same games whatever the worker count.
@@ -276,11 +327,12 @@ def _play_job(
         }
     else:
         raise ValueError(f"unknown game kind {job.kind!r}")
-    return play_game(
+    return play_game_outcome(
         agents,
         seed=job.seed,
         record=job.kind == "selfplay",
         value_mix=job.value_mix,
+        truncated_value=job.truncated_value,
     )
 
 
@@ -305,7 +357,7 @@ def _init_worker(
         _WORKER_NETS[name] = net
 
 
-def _worker_play(job: GameJob) -> Tuple[Optional[int], int, List[Example]]:
+def _worker_play(job: GameJob) -> Outcome:
     return _play_job(job, _WORKER_NETS, reseed=True)
 
 
@@ -313,7 +365,7 @@ def run_games(
     jobs: List[GameJob],
     nets: Dict[str, PolicyValueNetwork],
     workers: int = 1,
-) -> List[Tuple[Optional[int], int, List[Example]]]:
+) -> List[Outcome]:
     """Play ``jobs`` in order, or across ``workers`` processes.
 
     Games are independent, so they parallelise cleanly; the two seats of
@@ -344,14 +396,24 @@ def run_games(
 
 def _score(
     jobs: List[GameJob],
-    results: List[Tuple[Optional[int], int, List[Example]]],
+    results: List[Outcome],
+    stats: Optional[Dict[str, int]] = None,
 ) -> float:
+    """Score from ``job.seat``'s side; no-result games still count half.
+
+    Truncated games keep the half point so scores stay comparable with
+    older runs; ``stats["truncated"]`` reports how many there were (#54).
+    """
     score = 0.0
-    for job, (winner, _, _) in zip(jobs, results):
+    truncated = 0
+    for job, (winner, _, _, cut) in zip(jobs, results):
+        truncated += int(cut)
         if winner == job.seat:
             score += 1.0
         elif winner is None:
             score += 0.5
+    if stats is not None:
+        stats["truncated"] = truncated
     return score / len(jobs) if jobs else float("nan")
 
 
@@ -363,6 +425,7 @@ def evaluate(
     fpu_reduction: Optional[float] = None,
     search: str = "puct",
     workers: int = 1,
+    stats: Optional[Dict[str, int]] = None,
 ) -> float:
     """Win rate against RandomAgent, seats alternating.
 
@@ -373,7 +436,7 @@ def evaluate(
         GameJob("random", seed + g, g % 2, simulations, fpu_reduction, search)
         for g in range(games)
     ]
-    return _score(jobs, run_games(jobs, {"net": network}, workers))
+    return _score(jobs, run_games(jobs, {"net": network}, workers), stats)
 
 
 def evaluate_vs_reference(
@@ -385,6 +448,7 @@ def evaluate_vs_reference(
     fpu_reduction: Optional[float] = None,
     search: str = "puct",
     workers: int = 1,
+    stats: Optional[Dict[str, int]] = None,
 ) -> float:
     """Score against the same search driven by a frozen reference network.
 
@@ -400,7 +464,7 @@ def evaluate_vs_reference(
         for g in range(games)
     ]
     nets = {"net": network, "ref": reference}
-    return _score(jobs, run_games(jobs, nets, workers))
+    return _score(jobs, run_games(jobs, nets, workers), stats)
 
 
 def train_on_buffer(
@@ -696,9 +760,12 @@ def train(
     buffer_size: int = 20000,
     probe_size: int = 256,
     ema_decay: float = 0.0,
+    truncated_value: str = "draw",
 ) -> List[IterationResult]:
     if not 0.0 <= ema_decay < 1.0:
         raise ValueError("--ema-decay must be in [0, 1)")
+    if truncated_value not in TRUNCATED_VALUE_MODES:
+        raise ValueError(f"unknown truncated_value {truncated_value!r}")
     if plateau > 0 and anchor is None:
         raise ValueError("--plateau needs --anchor to measure progress")
     seed_everything(seed)
@@ -775,6 +842,13 @@ def train(
             "buffer_size": buffer_size,
             "probe_size": probe_size,
             "ema_decay": ema_decay,
+            # Parity record (#54): self-play and eval share one step cap.
+            "max_steps_selfplay": MAX_STEPS,
+            "max_steps_eval": MAX_STEPS,
+            "truncated_value": truncated_value,
+            "selfplay_temperature": SELF_PLAY_TEMPERATURE,
+            "root_dirichlet_alpha": ROOT_DIRICHLET_ALPHA,
+            "eval_play": "greedy, no root noise",
         }
         if anchor is None:
             return config
@@ -803,15 +877,25 @@ def train(
                 fpu_reduction=fpu_reduction,
                 search=search,
                 value_mix=value_mix,
+                truncated_value=truncated_value,
             )
             for game in range(games)
         ]
         decisive = []
-        for winner, length, examples in run_games(
+        selfplay_truncated = 0
+        new_examples = 0
+        zero_examples = 0
+        truncated_examples = 0
+        for winner, length, examples, cut in run_games(
             jobs, {"net": network}, workers
         ):
             buffer.extend(examples)
             turns.append(length)
+            new_examples += len(examples)
+            zero_examples += sum(1 for e in examples if e.value == 0.0)
+            if cut:
+                selfplay_truncated += 1
+                truncated_examples += len(examples)
             if winner is not None:
                 decisive.append(winner == 0)
         if not probe:
@@ -833,6 +917,9 @@ def train(
             ema=ema_net,
             ema_decay=ema_decay,
         )
+        eval_stats: Dict[str, int] = {}
+        ref_stats: Dict[str, int] = {}
+        anchor_stats: Dict[str, int] = {}
         win_rate = evaluate(
             network,
             games=eval_games,
@@ -841,6 +928,7 @@ def train(
             fpu_reduction=fpu_reduction,
             search=search,
             workers=workers,
+            stats=eval_stats,
         )
         n_ref = eval_games if ref_eval_games is None else ref_eval_games
         ref_win_rate = (
@@ -853,6 +941,7 @@ def train(
                 fpu_reduction=fpu_reduction,
                 search=search,
                 workers=workers,
+                stats=ref_stats,
             )
             if n_ref > 0
             else None
@@ -885,6 +974,7 @@ def train(
                 fpu_reduction=fpu_reduction,
                 search=search,
                 workers=workers,
+                stats=anchor_stats,
             )
 
         result = IterationResult(
@@ -902,6 +992,16 @@ def train(
                 len(losses) * batch_size / len(buffer) if buffer else None
             ),
             selfplay_p0_rate=(float(np.mean(decisive)) if decisive else None),
+            selfplay_truncated=selfplay_truncated,
+            eval_truncated=eval_stats.get("truncated"),
+            ref_truncated=ref_stats.get("truncated"),
+            anchor_truncated=anchor_stats.get("truncated"),
+            value_zero_share=(
+                zero_examples / new_examples if new_examples else None
+            ),
+            value_truncated_share=(
+                truncated_examples / new_examples if new_examples else None
+            ),
             **probe_stats(network, probe),
         )
         results.append(result)
@@ -964,6 +1064,13 @@ def train(
                 f"saturated {result.probe_saturated:.2f}",
                 flush=True,
             )
+        print(
+            f"         truncated selfplay {selfplay_truncated}/{games}  "
+            f"eval {eval_stats.get('truncated', 0)}/{eval_games}  "
+            f"z0 {result.value_zero_share or 0.0:.2f}  "
+            f"from_truncated {result.value_truncated_share or 0.0:.2f}",
+            flush=True,
+        )
         if anchor_score is not None:
             lo, hi = wilson_interval(anchor_score, anchor_games)
             best_w = best_anchor_weights(results)
@@ -1057,6 +1164,14 @@ def main() -> None:
         help="keep an exponential moving average of the weights, updated "
         "every batch (e.g. 0.99; 0 = off). Anchor checks score the EMA too, "
         "and best.pt takes whichever weights score higher (#57)",
+    )
+    parser.add_argument(
+        "--truncated-value",
+        choices=TRUNCATED_VALUE_MODES,
+        default="draw",
+        help="value target for self-play games cut off at MAX_STEPS: "
+        "draw (z = 0, the old behaviour) or bootstrap (root search value; "
+        "positions without one are dropped)",
     )
     parser.add_argument(
         "--ref-eval-games",
@@ -1180,6 +1295,7 @@ def main() -> None:
         buffer_size=args.buffer_size,
         probe_size=args.probe_size,
         ema_decay=args.ema_decay,
+        truncated_value=args.truncated_value,
     )
 
 
