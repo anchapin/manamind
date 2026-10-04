@@ -118,7 +118,7 @@ def test_parallel_games_match_whatever_the_worker_count() -> None:
     ]
     two = train_simple.run_games(jobs, {"net": net}, workers=2)
     three = train_simple.run_games(jobs, {"net": net}, workers=3)
-    assert [(w, t) for w, t, _ in two] == [(w, t) for w, t, _ in three]
+    assert [o[:2] for o in two] == [o[:2] for o in three]
 
 
 def test_worker_networks_keep_the_parents_mode() -> None:
@@ -150,5 +150,5 @@ def test_worker_count_does_not_change_the_games() -> None:
     ]
     inline = train_simple.run_games(jobs, {"net": net}, 1)
     pooled = train_simple.run_games(jobs, {"net": net}, 2)
-    assert [(w, t) for w, t, _ in inline] == [(w, t) for w, t, _ in pooled]
+    assert [o[:2] for o in inline] == [o[:2] for o in pooled]
     torch.set_num_threads(2)
