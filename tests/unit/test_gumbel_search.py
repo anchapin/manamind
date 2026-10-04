@@ -139,3 +139,29 @@ def test_second_visit_expands_below_the_child() -> None:
     visited = [c for _, c in root.children if c.visits > 1]
     assert visited
     assert all(c.children or c.is_terminal() for c in visited)
+
+
+def test_evaluation_skips_forced_moves() -> None:
+    """A forced position is valued at the next real decision (#58)."""
+    from manamind.core.action import ActionSpace
+    from manamind.core.agent import MCTSAgent
+    from manamind.rules.simple import create_simple_game_start
+
+    space = ActionSpace()
+    agent = MCTSAgent(player_id=0)
+    state = create_simple_game_start(3)
+    found = False
+    for _ in range(400):
+        if state.is_game_over():
+            break
+        legal = space.get_legal_actions(state)
+        if len(legal) == 1:
+            settled = agent._settle(state)
+            assert settled.is_game_over() or (
+                len(space.get_legal_actions(settled)) > 1
+            )
+            assert settled is not state
+            found = True
+            break
+        state = legal[-1].execute(state)
+    assert found
