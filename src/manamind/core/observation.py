@@ -81,7 +81,11 @@ def determinize(
     player's hidden hand slots first, then their library. Without a deck
     list for a player, their placeholders stay as they are.
     """
-    rng = rng or random.Random()
+    if rng is None:
+        # Draw from the global RNG so seeding it (as the trainer does
+        # per game) makes the sampled world reproducible. A bare
+        # random.Random() seeds from the OS and differs every call.
+        rng = random.Random(random.getrandbits(64))
     world = observation.copy()
     for player in world.players:
         deck = (deck_lists or {}).get(player.player_id)
