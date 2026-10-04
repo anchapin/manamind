@@ -92,6 +92,9 @@ class IterationResult:
     probe_value_std: Optional[float] = None
     probe_value_mse: Optional[float] = None
     probe_saturated: Optional[float] = None
+    # Anchor score of the EMA weights (#57); None without --ema-decay or
+    # on iterations without an anchor check.
+    ema_anchor_score: Optional[float] = None
     # Truncation audit (#54): games that hit MAX_STEPS with no winner.
     # None for runs from before this existed.
     selfplay_truncated: Optional[int] = None
@@ -121,6 +124,7 @@ class IterationResult:
             "probe_value_std": self.probe_value_std,
             "probe_value_mse": self.probe_value_mse,
             "probe_saturated": self.probe_saturated,
+            "ema_anchor_score": self.ema_anchor_score,
             "selfplay_truncated": self.selfplay_truncated,
             "eval_truncated": self.eval_truncated,
             "ref_truncated": self.ref_truncated,
@@ -471,6 +475,8 @@ def train_on_buffer(
     batch_size: int = 32,
     epochs: int = 8,
     grad_norms: Optional[List[float]] = None,
+    ema: Optional[PolicyValueNetwork] = None,
+    ema_decay: float = 0.0,
 ) -> List[float]:
     if len(buffer) < batch_size:
         return []
@@ -506,6 +512,8 @@ def train_on_buffer(
         if grad_norms is not None:
             grad_norms.append(float(norm))
         optimizer.step()
+        if ema is not None:
+            update_ema(ema, network, ema_decay)
         losses.append(float(total_loss.detach()))
 
     return losses
@@ -575,6 +583,24 @@ def probe_stats(
     return stats
 
 
+@torch.no_grad()
+def update_ema(
+    ema: PolicyValueNetwork, network: PolicyValueNetwork, decay: float
+) -> None:
+    """One EMA step: ema = decay * ema + (1 - decay) * network (#57).
+
+    Float parameters and buffers are averaged; anything else (counters)
+    is copied, so the EMA net always loads as a normal network.
+    """
+    live = network.state_dict()
+    for name, value in ema.state_dict().items():
+        current = live[name]
+        if value.dtype.is_floating_point:
+            value.mul_(decay).add_(current.detach(), alpha=1.0 - decay)
+        else:
+            value.copy_(current)
+
+
 def save_checkpoint(
     path: Path,
     network: PolicyValueNetwork,
@@ -584,6 +610,8 @@ def save_checkpoint(
     action_space_size: int,
     result: IterationResult,
     resume_state: Optional[dict] = None,
+    ema: Optional[PolicyValueNetwork] = None,
+    weights: str = "raw",
 ) -> None:
     """Write weights plus enough metadata to rebuild and re-evaluate.
 
@@ -598,7 +626,12 @@ def save_checkpoint(
         "seed": seed,
         "action_space_size": action_space_size,
         "result": result.as_dict(),
+        # Which weights sit under "network": "raw" or "ema" (#57). Loaders
+        # read "network" either way, so an EMA best.pt needs no changes.
+        "weights": weights,
     }
+    if ema is not None:
+        payload["ema_network"] = ema.state_dict()
     if resume_state is not None:
         payload["resume"] = resume_state
     tmp = path.with_suffix(".tmp")
@@ -677,12 +710,26 @@ def best_anchor(
     results: List[IterationResult],
 ) -> Optional[Tuple[int, float]]:
     """(iteration, score) of the first-best anchor check, if any."""
-    best: Optional[Tuple[int, float]] = None
+    best = best_anchor_weights(results)
+    return (best[0], best[1]) if best else None
+
+
+def best_anchor_weights(
+    results: List[IterationResult],
+) -> Optional[Tuple[int, float, str]]:
+    """(iteration, score, "raw" or "ema") of the first-best anchor check.
+
+    Raw and EMA weights compete on equal terms; on a tie the earlier
+    check wins, and raw beats EMA within one iteration.
+    """
+    best: Optional[Tuple[int, float, str]] = None
     for r in results:
-        if r.anchor_score is not None and (
-            best is None or r.anchor_score > best[1]
+        for score, weights in (
+            (r.anchor_score, "raw"),
+            (r.ema_anchor_score, "ema"),
         ):
-            best = (r.iteration, r.anchor_score)
+            if score is not None and (best is None or score > best[1]):
+                best = (r.iteration, score, weights)
     return best
 
 
@@ -712,8 +759,11 @@ def train(
     batch_size: int = 32,
     buffer_size: int = 20000,
     probe_size: int = 256,
+    ema_decay: float = 0.0,
     truncated_value: str = "draw",
 ) -> List[IterationResult]:
+    if not 0.0 <= ema_decay < 1.0:
+        raise ValueError("--ema-decay must be in [0, 1)")
     if truncated_value not in TRUNCATED_VALUE_MODES:
         raise ValueError(f"unknown truncated_value {truncated_value!r}")
     if plateau > 0 and anchor is None:
@@ -730,6 +780,7 @@ def train(
     reference = copy.deepcopy(network).eval()
     optimizer = torch.optim.Adam(network.parameters(), lr=lr)
     loss_fn = PolicyValueLoss(value_weight=1.0, l2_reg=1e-4)
+    ema_net = copy.deepcopy(network) if ema_decay > 0 else None
 
     buffer: List[Example] = []
     results: List[IterationResult] = []
@@ -748,6 +799,12 @@ def train(
             )
         network.load_state_dict(payload["network"])
         optimizer.load_state_dict(payload["optimizer"])
+        if ema_net is not None:
+            # A checkpoint from before --ema-decay restarts the average
+            # from the current weights.
+            ema_net.load_state_dict(
+                payload.get("ema_network", payload["network"])
+            )
         state = payload["resume"]
         buffer = [Example(*item) for item in state["buffer"]]
         probe = [Example(*item) for item in state.get("probe", [])]
@@ -784,6 +841,7 @@ def train(
             "batch_size": batch_size,
             "buffer_size": buffer_size,
             "probe_size": probe_size,
+            "ema_decay": ema_decay,
             # Parity record (#54): self-play and eval share one step cap.
             "max_steps_selfplay": MAX_STEPS,
             "max_steps_eval": MAX_STEPS,
@@ -795,8 +853,10 @@ def train(
         if anchor is None:
             return config
         best = best_anchor(results)
+        best_w = best_anchor_weights(results)
         return {
             **config,
+            "best_anchor_weights": best_w[2] if best_w else None,
             "anchor": str(anchor),
             "anchor_every": anchor_every,
             "anchor_games": anchor_games,
@@ -854,6 +914,8 @@ def train(
             batch_size=batch_size,
             epochs=train_batches,
             grad_norms=grad_norms,
+            ema=ema_net,
+            ema_decay=ema_decay,
         )
         eval_stats: Dict[str, int] = {}
         ref_stats: Dict[str, int] = {}
@@ -885,9 +947,24 @@ def train(
             else None
         )
         anchor_score = None
+        ema_anchor_score = None
         if anchor_net is not None and (
             iteration % anchor_every == 0 or iteration == iterations
         ):
+            if ema_net is not None:
+                # Same games, same mode as the raw net, only the weights
+                # differ.
+                ema_net.train(network.training)
+                ema_anchor_score = evaluate_vs_reference(
+                    ema_net,
+                    anchor_net,
+                    games=anchor_games,
+                    simulations=simulations,
+                    seed=seed * 15485863 + iteration,
+                    fpu_reduction=fpu_reduction,
+                    search=search,
+                    workers=workers,
+                )
             anchor_score = evaluate_vs_reference(
                 network,
                 anchor_net,
@@ -905,6 +982,7 @@ def train(
             win_rate=win_rate,
             ref_win_rate=ref_win_rate,
             anchor_score=anchor_score,
+            ema_anchor_score=ema_anchor_score,
             mean_loss=float(np.mean(losses)) if losses else float("nan"),
             examples=len(buffer),
             mean_turns=float(np.mean(turns)),
@@ -955,6 +1033,7 @@ def train(
                 seed=seed,
                 action_space_size=action_space_size,
                 result=result,
+                ema=ema_net,
                 resume_state={
                     # plain tuples, so other scripts can load the file
                     "buffer": [(e.state, e.policy, e.value) for e in buffer],
@@ -994,8 +1073,13 @@ def train(
         )
         if anchor_score is not None:
             lo, hi = wilson_interval(anchor_score, anchor_games)
-            best = best_anchor(results)
-            is_best = best is not None and best[0] == iteration
+            best_w = best_anchor_weights(results)
+            is_best = best_w is not None and best_w[0] == iteration
+            if ema_anchor_score is not None:
+                print(
+                    f"         vs_anchor (ema) {ema_anchor_score:.3f}",
+                    flush=True,
+                )
             print(
                 f"         vs_anchor {anchor_score:.3f}  "
                 f"(95% CI {lo:.3f}-{hi:.3f}, {anchor_games} games)"
@@ -1003,14 +1087,17 @@ def train(
                 flush=True,
             )
             if is_best and checkpoint_dir is not None:
+                assert best_w is not None
+                use_ema = best_w[2] == "ema" and ema_net is not None
                 save_checkpoint(
                     checkpoint_dir / "best.pt",
-                    network,
+                    ema_net if use_ema and ema_net is not None else network,
                     optimizer,
                     iteration=iteration,
                     seed=seed,
                     action_space_size=action_space_size,
                     result=result,
+                    weights="ema" if use_ema else "raw",
                 )
         if stopped_at is not None:
             print(
@@ -1069,6 +1156,14 @@ def main() -> None:
         default=0.0,
         help="soft-Z value target: weight of the root search value against "
         "the game result (0 = result only, the AlphaZero default)",
+    )
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=0.0,
+        help="keep an exponential moving average of the weights, updated "
+        "every batch (e.g. 0.99; 0 = off). Anchor checks score the EMA too, "
+        "and best.pt takes whichever weights score higher (#57)",
     )
     parser.add_argument(
         "--truncated-value",
@@ -1199,6 +1294,7 @@ def main() -> None:
         batch_size=args.batch_size,
         buffer_size=args.buffer_size,
         probe_size=args.probe_size,
+        ema_decay=args.ema_decay,
         truncated_value=args.truncated_value,
     )
 
