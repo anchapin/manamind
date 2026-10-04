@@ -414,9 +414,21 @@ class MCTSAgent(Agent):
         )
 
     def _simulate_from(self, root: MCTSNode, child: MCTSNode) -> None:
-        """Run one simulation that starts by taking ``child`` at the root."""
+        """Run one simulation that starts by taking ``child`` at the root.
+
+        A root child that has never been visited is evaluated itself, as in
+        AlphaZero. Expanding it straight away evaluated a grandchild instead,
+        and since ``expand()`` pops the last legal action (always
+        ``PASS_PRIORITY``), a one-visit Q meant "this action, then pass".
+        That put visited children on a different footing from the
+        unvisited ones, whose completed value is anchored on the root
+        evaluation, and made low-budget search lose to random (#58).
+        """
         node = child
         path = [root, child]
+        if child.visits == 0:
+            self._backup_path(path, self._evaluate_position(child.game_state))
+            return
         while (
             not node.is_terminal()
             and node.is_fully_expanded()
@@ -749,6 +761,27 @@ class MCTSAgent(Agent):
                 key
             ] + frac * (draw / total)
 
+    MAX_FORCED_STEPS = 50
+
+    def _settle(self, game_state: GameState) -> GameState:
+        """Play forced moves until someone has a real decision.
+
+        Training only records positions with more than one legal action,
+        so the value head has never seen a forced position (e.g. the
+        attacker holding priority right after blockers are declared, where
+        passing is the only move). Reading those directly was off by about
+        0.5 after the perspective flip (#58). Every evaluation therefore
+        happens at the next real decision, or at the end of the game.
+        """
+        for _ in range(self.MAX_FORCED_STEPS):
+            if game_state.is_game_over():
+                break
+            legal = self.action_space.get_legal_actions(game_state)
+            if len(legal) != 1:
+                break
+            game_state = legal[0].execute(game_state)
+        return game_state
+
     def _evaluate_position(self, game_state: GameState) -> float:
         """Evaluate a game position.
 
@@ -758,6 +791,7 @@ class MCTSAgent(Agent):
         Returns:
             Value from current player's perspective (-1 to 1)
         """
+        game_state = self._settle(game_state)
         # Check for terminal states
         if game_state.is_game_over():
             winner = game_state.winner()
