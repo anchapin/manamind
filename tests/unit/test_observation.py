@@ -107,3 +107,19 @@ def test_mcts_agent_plays_from_an_observation() -> None:
     legal = ActionSpace().get_legal_actions(state)
     assert action.action_type in {a.action_type for a in legal}
     action.execute(state)
+
+
+def test_determinize_without_rng_follows_the_global_seed() -> None:
+    """No explicit rng: the sampled world is fixed by random.seed()."""
+    state = create_simple_game_start(4)
+    obs = observe(state, viewer=0)
+    decks = {0: build_simple_deck(), 1: build_simple_deck()}
+    random.seed(123)
+    first = determinize(obs, decks)
+    random.seed(123)
+    second = determinize(obs, decks)
+    for a, b in zip(first.players, second.players):
+        assert [c.name for c in a.hand.cards] == [c.name for c in b.hand.cards]
+        assert [c.name for c in a.library.cards] == [
+            c.name for c in b.library.cards
+        ]
