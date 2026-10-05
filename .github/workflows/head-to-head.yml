@@ -36,6 +36,16 @@ on:
         description: "Checkpoint file for B; 'latest' = newest iter_*.pt"
         required: true
         default: "latest"
+      a_weights:
+        description: "Weights for A: network (the checkpoint's saved weights) or ema (its EMA average, runs trained with --ema-decay)"
+        type: choice
+        options: [network, ema]
+        default: network
+      b_weights:
+        description: "Weights for B: network or ema"
+        type: choice
+        options: [network, ema]
+        default: network
       games:
         description: "Games (even; each deal is played with seats swapped)"
         required: true
@@ -59,6 +69,8 @@ jobs:
       B_CKPT: ${{ github.event.inputs.b_ckpt }}
       A_SEARCH: ${{ github.event.inputs.a_search }}
       B_SEARCH: ${{ github.event.inputs.b_search }}
+      A_WEIGHTS: ${{ github.event.inputs.a_weights || 'network' }}
+      B_WEIGHTS: ${{ github.event.inputs.b_weights || 'network' }}
       GAMES: ${{ github.event.inputs.games }}
       SIMS: ${{ github.event.inputs.simulations }}
       OMP_NUM_THREADS: "2"
@@ -101,10 +113,12 @@ jobs:
           set -o pipefail
           pick() { [ "$2" = latest ] && echo "$HOME/manamind-runs/$1/checkpoints" || echo "$HOME/manamind-runs/$1/checkpoints/$2"; }
           mkdir -p results
-          OUT="results/h2h_${A_RUN}_vs_${B_RUN}"
+          OUT="results/h2h_${A_RUN}-${A_WEIGHTS}_vs_${B_RUN}-${B_WEIGHTS}"
           PYTHONPATH=src python scripts/head_to_head.py \
             --a "$(pick "$A_RUN" "$A_CKPT")" --a-search "$A_SEARCH" \
+            --a-weights "$A_WEIGHTS" \
             --b "$(pick "$B_RUN" "$B_CKPT")" --b-search "$B_SEARCH" \
+            --b-weights "$B_WEIGHTS" \
             --games "$GAMES" --simulations "$SIMS" \
             --out "$OUT.json" 2>&1 | tee "$OUT.log"
 

@@ -22,6 +22,7 @@ from typing import Dict, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from train_simple import (  # noqa: E402
+    CHECKPOINT_WEIGHTS,
     MCTSAgent,
     load_checkpoint,
     play_game,
@@ -47,8 +48,11 @@ def match(
     games: int,
     simulations: int,
     seed: int,
+    a_weights: str = "network",
+    b_weights: str = "network",
 ) -> Dict[str, object]:
-    net_a, net_b = load_checkpoint(a), load_checkpoint(b)
+    net_a = load_checkpoint(a, weights=a_weights)
+    net_b = load_checkpoint(b, weights=b_weights)
     a_wins = b_wins = draws = 0
     turns = 0
     for game in range(games):
@@ -94,8 +98,10 @@ def match(
     return {
         "a": str(a),
         "a_search": a_search,
+        "a_weights": a_weights,
         "b": str(b),
         "b_search": b_search,
+        "b_weights": b_weights,
         "games": games,
         "simulations": simulations,
         "seed": seed,
@@ -118,6 +124,13 @@ def main() -> None:
     parser.add_argument(
         "--b-search", choices=("puct", "gumbel"), default="puct"
     )
+    for side in ("a", "b"):
+        parser.add_argument(
+            f"--{side}-weights",
+            choices=CHECKPOINT_WEIGHTS,
+            default="network",
+            help="network = the checkpoint's saved weights; ema = its EMA",
+        )
     parser.add_argument("--games", type=int, default=100)
     parser.add_argument("--simulations", type=int, default=40)
     parser.add_argument("--seed", type=int, default=10_000)
@@ -128,7 +141,11 @@ def main() -> None:
 
     seed_everything(args.seed)
     a, b = resolve(args.a), resolve(args.b)
-    print(f"A = {a} ({args.a_search})\nB = {b} ({args.b_search})", flush=True)
+    print(
+        f"A = {a} ({args.a_search}, {args.a_weights})\n"
+        f"B = {b} ({args.b_search}, {args.b_weights})",
+        flush=True,
+    )
     result = match(
         a,
         args.a_search,
@@ -137,6 +154,8 @@ def main() -> None:
         args.games,
         args.simulations,
         args.seed,
+        a_weights=args.a_weights,
+        b_weights=args.b_weights,
     )
     lo, hi = result["a_score_95ci"]
     print(

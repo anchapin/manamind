@@ -665,13 +665,31 @@ def latest_resumable(checkpoint_dir: Optional[Path]) -> Optional[Path]:
     return None
 
 
-def load_checkpoint(path: Path) -> PolicyValueNetwork:
-    """Rebuild the simple-mode network from a checkpoint."""
+CHECKPOINT_WEIGHTS = ("network", "ema")
+
+
+def load_checkpoint(
+    path: Path, weights: str = "network"
+) -> PolicyValueNetwork:
+    """Rebuild the simple-mode network from a checkpoint.
+
+    ``weights="network"`` loads what the checkpoint saved as its main weights
+    (raw or EMA, whichever ``best.pt`` selection picked). ``weights="ema"``
+    loads the EMA average stored alongside them (#57), so raw and EMA from the
+    same iteration can be compared head to head.
+    """
+    if weights not in CHECKPOINT_WEIGHTS:
+        raise ValueError(f"weights must be one of {CHECKPOINT_WEIGHTS}")
     payload = torch.load(path, map_location="cpu", weights_only=False)
+    key = "ema_network" if weights == "ema" else "network"
+    if key not in payload:
+        raise ValueError(
+            f"{path} has no EMA weights (trained without --ema-decay)"
+        )
     network = build_simple_network(
         action_space_size=payload["action_space_size"]
     )
-    network.load_state_dict(payload["network"])
+    network.load_state_dict(payload[key])
     network.eval()
     return network
 
