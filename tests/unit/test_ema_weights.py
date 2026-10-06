@@ -102,3 +102,44 @@ def test_bad_decay_is_rejected() -> None:
             seed=0,
             ema_decay=1.0,
         )
+
+
+def test_load_checkpoint_can_pick_the_ema_weights(tmp_path) -> None:
+    raw, ema = _net(0), _net(1)
+    opt = torch.optim.Adam(raw.parameters())
+    path = tmp_path / "iter_005.pt"
+    train_simple.save_checkpoint(
+        path,
+        raw,
+        opt,
+        iteration=5,
+        seed=0,
+        action_space_size=23,
+        result=_result(5, 0.4, 0.5),
+        ema=ema,
+    )
+    as_saved = train_simple.load_checkpoint(path)
+    as_ema = train_simple.load_checkpoint(path, weights="ema")
+    for name, value in as_saved.state_dict().items():
+        assert torch.allclose(value.float(), raw.state_dict()[name].float())
+    for name, value in as_ema.state_dict().items():
+        assert torch.allclose(value.float(), ema.state_dict()[name].float())
+
+
+def test_load_checkpoint_without_ema_refuses_ema(tmp_path) -> None:
+    raw = _net(0)
+    opt = torch.optim.Adam(raw.parameters())
+    path = tmp_path / "iter_001.pt"
+    train_simple.save_checkpoint(
+        path,
+        raw,
+        opt,
+        iteration=1,
+        seed=0,
+        action_space_size=23,
+        result=_result(1, 0.4, None),
+    )
+    with pytest.raises(ValueError, match="no EMA"):
+        train_simple.load_checkpoint(path, weights="ema")
+    with pytest.raises(ValueError):
+        train_simple.load_checkpoint(path, weights="bogus")
