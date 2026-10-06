@@ -1,0 +1,86 @@
+# Export one trained checkpoint to ONNX + schema for host engines (#46),
+# on Alex's PC (self-hosted runner labelled "manamind-train"), then play
+# games through the exported model only (scripts/onnx_host.py) to prove it
+# works without PyTorch. Manual dispatch only.
+name: Export ONNX on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch with scripts/export_onnx.py"
+        required: true
+        default: "main"
+      run:
+        description: "Run name (uses ~/manamind-runs/<run>/checkpoints)"
+        required: true
+        default: "seed0_settle"
+      ckpt:
+        description: "Checkpoint file (e.g. iter_045.pt, best.pt)"
+        required: true
+        default: "iter_045.pt"
+      host_games:
+        description: "Games the reference host plays through the exported model vs RandomAgent"
+        required: true
+        default: "40"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 60
+    env:
+      RUN: ${{ github.event.inputs.run }}
+      CKPT: ${{ github.event.inputs.ckpt }}
+      HOST_GAMES: ${{ github.event.inputs.host_games }}
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Validate inputs
+        run: |
+          [[ "$RUN" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run name: $RUN"; exit 1; }
+          [[ "$CKPT" =~ ^[A-Za-z0-9._-]+\.pt$ ]] || { echo "bad checkpoint name: $CKPT"; exit 1; }
+          [[ "$HOST_GAMES" =~ ^[0-9]+$ ]] || { echo "host_games must be a number"; exit 1; }
+          P="$HOME/manamind-runs/$RUN/checkpoints/$CKPT"
+          [ -f "$P" ] || { echo "no checkpoint at $P"; exit 1; }
+          echo "CKPT_PATH=$P" >> "$GITHUB_ENV"
+          echo "OUT=export/${RUN}_${CKPT%.pt}" >> "$GITHUB_ENV"
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e ".[export]"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Export with PyTorch parity check
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$OUT"
+          PYTHONPATH=src python scripts/export_onnx.py "$CKPT_PATH" "$OUT" \
+            --check 64 2>&1 | tee "$OUT/export.log"
+          sha256sum "$CKPT_PATH" | awk '{print $1}' > "$OUT/source_checkpoint.sha256"
+          echo "$RUN/checkpoints/$CKPT" > "$OUT/source_checkpoint.txt"
+
+      - name: Play through the exported model only
+        shell: bash
+        run: |
+          set -o pipefail
+          PYTHONPATH=src python scripts/onnx_host.py "$OUT" \
+            --games "$HOST_GAMES" --temperature 1.0 2>&1 | tee "$OUT/host.log"
+
+      - name: Upload model
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnx-${{ github.event.inputs.run }}-${{ github.event.inputs.ckpt }}
+          path: export/
