@@ -1,0 +1,136 @@
+{
+  "schema_version": "simple-v1",
+  "observation_dim": 25,
+  "observation": [
+    {
+      "name": "self.life",
+      "scale": "life / 20"
+    },
+    {
+      "name": "self.hand_size",
+      "scale": "cards in hand / 7"
+    },
+    {
+      "name": "self.library_size",
+      "scale": "cards in library / 40"
+    },
+    {
+      "name": "self.graveyard_size",
+      "scale": "cards in graveyard / 10"
+    },
+    {
+      "name": "self.lands",
+      "scale": "lands on battlefield / 10"
+    },
+    {
+      "name": "self.untapped_lands",
+      "scale": "untapped lands / 10"
+    },
+    {
+      "name": "self.creatures",
+      "scale": "creatures on battlefield / 10"
+    },
+    {
+      "name": "self.total_power",
+      "scale": "sum of creature power / 20"
+    },
+    {
+      "name": "self.total_toughness",
+      "scale": "sum of creature toughness / 20"
+    },
+    {
+      "name": "self.untapped_creatures",
+      "scale": "untapped creatures / 10"
+    },
+    {
+      "name": "opponent.life",
+      "scale": "life / 20"
+    },
+    {
+      "name": "opponent.hand_size",
+      "scale": "cards in hand / 7"
+    },
+    {
+      "name": "opponent.library_size",
+      "scale": "cards in library / 40"
+    },
+    {
+      "name": "opponent.graveyard_size",
+      "scale": "cards in graveyard / 10"
+    },
+    {
+      "name": "opponent.lands",
+      "scale": "lands on battlefield / 10"
+    },
+    {
+      "name": "opponent.untapped_lands",
+      "scale": "untapped lands / 10"
+    },
+    {
+      "name": "opponent.creatures",
+      "scale": "creatures on battlefield / 10"
+    },
+    {
+      "name": "opponent.total_power",
+      "scale": "sum of creature power / 20"
+    },
+    {
+      "name": "opponent.total_toughness",
+      "scale": "sum of creature toughness / 20"
+    },
+    {
+      "name": "opponent.untapped_creatures",
+      "scale": "untapped creatures / 10"
+    },
+    {
+      "name": "phase.main",
+      "scale": "1 if current phase else 0"
+    },
+    {
+      "name": "phase.combat",
+      "scale": "1 if current phase else 0"
+    },
+    {
+      "name": "phase.end",
+      "scale": "1 if current phase else 0"
+    },
+    {
+      "name": "self_is_active",
+      "scale": "1 if it's our turn else 0"
+    },
+    {
+      "name": "turn",
+      "scale": "min(turn number, 60) / 60"
+    }
+  ],
+  "perspective": "player to act (holding priority)",
+  "actions": [
+    "play_land",
+    "cast_spell",
+    "activate_ability",
+    "activate_mana_ability",
+    "pass_priority",
+    "hold_priority",
+    "declare_attackers",
+    "declare_blockers",
+    "assign_combat_damage",
+    "order_blockers",
+    "mulligan",
+    "keep_hand",
+    "concede",
+    "discard",
+    "sacrifice",
+    "destroy",
+    "exile",
+    "choose_target",
+    "choose_mode",
+    "choose_x_value",
+    "order_cards",
+    "tap_for_mana",
+    "pay_mana"
+  ],
+  "outputs": {
+    "policy_logits": "unnormalised, full action space; mask to legal actions before softmax",
+    "value": "expected result for the player to act, -1 to 1"
+  }
+}
