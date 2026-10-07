@@ -14,7 +14,7 @@ from manamind.forge_interface import (
     priority_reply,
 )
 
-FAKE = textwrap.dedent("""
+_FAKE_SRC = """
     import json, sys
 
     def out(m):
@@ -36,7 +36,8 @@ FAKE = textwrap.dedent("""
     replies.append(sys.stdin.readline().strip())
     out({"t": "game_over", "game": 1, "result": "loss", "replies": replies})
     out({"t": "done", "decisions": 4, "fallbacks": 0, "errors": 0})
-    """)
+    """
+FAKE = textwrap.dedent(_FAKE_SRC)
 
 
 @pytest.fixture
