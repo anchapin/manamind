@@ -130,7 +130,7 @@ def test_loss_backprops() -> None:
     assert set(stats) == {"loss", "policy", "value", "entropy"}
 
 
-FAKE = textwrap.dedent("""
+_FAKE_SRC = """
     import json, sys
     VIEW = json.loads(sys.argv[1])
     def out(m):
@@ -143,7 +143,8 @@ FAKE = textwrap.dedent("""
         out({"t": "game_over", "game": g,
              "result": "win" if g % 2 else "loss", "turns": 5})
     out({"t": "done", "decisions": n, "fallbacks": 0, "errors": 0})
-    """)
+    """
+FAKE = textwrap.dedent(_FAKE_SRC)
 
 
 def test_train_against_fake_bridge(tmp_path: Path) -> None:

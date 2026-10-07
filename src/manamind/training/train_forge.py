@@ -54,8 +54,13 @@ def train(
     update_every: int = 4,
     seed: int = 0,
     resume: Optional[Path] = None,
+    save_every: int = 50,
 ) -> Dict[str, Any]:
-    """Run ``games`` games, updating every ``update_every`` games."""
+    """Run ``games`` games, updating every ``update_every`` games.
+
+    ``last.pt`` is rewritten every ``save_every`` games and at the end, so
+    a long run that dies can be resumed with ``--resume``.
+    """
     torch.manual_seed(seed)
     net = ForgePointerNet()
     opt = torch.optim.Adam(net.parameters(), lr=lr)
@@ -98,6 +103,21 @@ def train(
             history.append(rec)
             with log_path.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
+            if save_every > 0 and played % save_every == 0:
+                _save(net, opt, out_dir, start_game, played, history, t0, env)
+    return _save(net, opt, out_dir, start_game, played, history, t0, env)
+
+
+def _save(
+    net: ForgePointerNet,
+    opt: torch.optim.Optimizer,
+    out_dir: Path,
+    start_game: int,
+    played: int,
+    history: List[Dict[str, Any]],
+    t0: float,
+    env: ForgeEnv,
+) -> Dict[str, Any]:
     meta = {
         "games": start_game + played,
         "wins": sum(h["result"] == "win" for h in history),
@@ -105,6 +125,7 @@ def train(
         "secs": round(time.time() - t0, 1),
         "summary": env.summary,
     }
+    tmp = out_dir / "last.pt.tmp"
     torch.save(
         {
             "network": net.state_dict(),
@@ -112,8 +133,9 @@ def train(
             "config": {"card_dim": net.card_dim, "state_dim": net.state_dim},
             "meta": meta,
         },
-        out_dir / "last.pt",
+        tmp,
     )
+    tmp.replace(out_dir / "last.pt")
     return meta
 
 
@@ -136,6 +158,7 @@ def main() -> None:
     ap.add_argument("--update-every", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", type=Path)
+    ap.add_argument("--save-every", type=int, default=50)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     cmd = bridge_command(
@@ -155,6 +178,7 @@ def main() -> None:
         update_every=args.update_every,
         seed=args.seed,
         resume=args.resume,
+        save_every=args.save_every,
     )
     print(json.dumps(meta))
 
