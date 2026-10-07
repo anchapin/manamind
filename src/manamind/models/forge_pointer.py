@@ -356,9 +356,9 @@ def actor_critic_loss(
     loss = policy + value_coef * value - entropy_coef * entropy
     stats = {
         "loss": float(loss.detach()),
-        "policy": float(policy),
-        "value": float(value),
-        "entropy": float(entropy),
+        "policy": float(policy.detach()),
+        "value": float(value.detach()),
+        "entropy": float(entropy.detach()),
     }
     return loss, stats
 
