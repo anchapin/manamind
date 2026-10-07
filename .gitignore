@@ -204,6 +204,8 @@ config/*.yml
 
 # MTG/Forge specific
 forge/
+# Forge bridge sources live in a package dir named forge/ (#74)
+!tools/forge-bridge/src/manamind/forge/
 forge-gui-*
 CardsfromForge/
 Res/
@@ -212,6 +214,7 @@ screenshots/
 replays/
 *.forge
 *.dck
+!tools/forge-bridge/decks/*.dck
 
 # MTGA specific
 mtga_data/
