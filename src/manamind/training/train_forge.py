@@ -26,6 +26,7 @@ from manamind.models.forge_pointer import (
     ActOutput,
     ForgePointerNet,
     actor_critic_loss,
+    life_potential,
 )
 
 
@@ -37,12 +38,19 @@ def play_game(
     if env.finished:
         return None
     steps: List[ActOutput] = []
+    potentials: List[float] = []
     while not r.done:
         assert r.decision is not None
         out = net.act(r.decision, greedy=greedy)
         steps.append(out)
+        potentials.append(life_potential(r.decision))
         r = env.step(out.reply)
-    return {"steps": steps, "reward": r.reward, "info": r.info}
+    return {
+        "steps": steps,
+        "potentials": potentials,
+        "reward": r.reward,
+        "info": r.info,
+    }
 
 
 def train(
@@ -55,6 +63,9 @@ def train(
     seed: int = 0,
     resume: Optional[Path] = None,
     save_every: int = 50,
+    gamma: float = 1.0,
+    shaping_coef: float = 0.0,
+    entropy_coef: float = 0.01,
 ) -> Dict[str, Any]:
     """Run ``games`` games, updating every ``update_every`` games.
 
@@ -89,7 +100,14 @@ def train(
                 "decisions": len(game["steps"]),
             }
             if game["steps"]:
-                loss, stats = actor_critic_loss(game["steps"], game["reward"])
+                loss, stats = actor_critic_loss(
+                    game["steps"],
+                    game["reward"],
+                    entropy_coef=entropy_coef,
+                    potentials=game["potentials"],
+                    gamma=gamma,
+                    shaping_coef=shaping_coef,
+                )
                 pending.append(loss)
                 rec.update(stats)
             if pending and (played % update_every == 0 or played == games):
@@ -159,6 +177,19 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", type=Path)
     ap.add_argument("--save-every", type=int, default=50)
+    ap.add_argument(
+        "--gamma",
+        type=float,
+        default=1.0,
+        help="per-decision discount (1.0 = plain game result, #79)",
+    )
+    ap.add_argument(
+        "--shaping",
+        type=float,
+        default=0.0,
+        help="weight on life-lead change between decisions (#79)",
+    )
+    ap.add_argument("--entropy-coef", type=float, default=0.01)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     cmd = bridge_command(
@@ -179,6 +210,9 @@ def main() -> None:
         seed=args.seed,
         resume=args.resume,
         save_every=args.save_every,
+        gamma=args.gamma,
+        shaping_coef=args.shaping,
+        entropy_coef=args.entropy_coef,
     )
     print(json.dumps(meta))
 
