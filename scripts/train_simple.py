@@ -1141,7 +1141,8 @@ def train(
     return results
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The training CLI; ``scripts/preflight.py`` parses the same args."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=6)
     parser.add_argument("--games", type=int, default=6)
@@ -1284,7 +1285,11 @@ def main() -> None:
         help="continue from the newest resumable checkpoint in "
         "--checkpoint-dir instead of starting over",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     train(
         iterations=args.iterations,
