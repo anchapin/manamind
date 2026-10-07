@@ -141,7 +141,9 @@ class ForgeEnv:
         self._pending = None
         if t == "game_over":
             self.results.append(msg)
-            reward = {"win": 1.0, "loss": -1.0}.get(msg.get("result"), 0.0)
+            reward = {"win": 1.0, "loss": -1.0}.get(
+                str(msg.get("result")), 0.0
+            )
             return StepResult(
                 decision=None, done=True, reward=reward, info=msg
             )
