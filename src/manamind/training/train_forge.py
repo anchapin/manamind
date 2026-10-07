@@ -10,6 +10,11 @@ mode), the network is trained to reproduce its choices, and the value head
 to predict those games' results. ``--bc-epochs`` then makes extra passes
 over every recorded decision before actor-critic training takes over.
 
+``--eval-ckpts a.pt,b.pt`` skips training and plays ``--games`` games per
+checkpoint and mode (``--eval-modes greedy,sample``) with no updates, so a
+post-imitation ``bc.pt`` can be scored against the final ``last.pt``.
+Relative paths resolve against the parent of ``--out``.
+
 Example (short smoke run)::
 
     PYTHONPATH=src python -m manamind.training.train_forge \\
@@ -345,6 +350,74 @@ def train(
         )
 
 
+def evaluate(
+    command: Sequence[str],
+    cwd: Optional[Path],
+    ckpts: Sequence[Path],
+    games: int,
+    out_dir: Path,
+    modes: Sequence[str] = ("greedy", "sample"),
+    seed: int = 0,
+    labels: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Score each checkpoint over ``games`` games per mode; no training."""
+    for mode in modes:
+        if mode not in ("greedy", "sample"):
+            raise ValueError(f"unknown eval mode {mode!r}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "log.jsonl"
+    names = list(labels) if labels is not None else [str(c) for c in ckpts]
+    results: List[Dict[str, Any]] = []
+    t0 = time.time()
+    for ckpt_path, name in zip(ckpts, names):
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        cfg = ckpt.get("config", {})
+        net = ForgePointerNet(
+            card_dim=int(cfg.get("card_dim", 64)),
+            state_dim=int(cfg.get("state_dim", 128)),
+        )
+        net.load_state_dict(ckpt["network"])
+        net.eval()
+        for mode in modes:
+            torch.manual_seed(seed)
+            wins = played = turns = 0
+            with torch.no_grad(), ForgeEnv(command, cwd=cwd) as env:
+                while played < games:
+                    game = play_game(env, net, greedy=mode == "greedy")
+                    if game is None:
+                        break
+                    played += 1
+                    result = game["info"].get("result")
+                    wins += result == "win"
+                    turns += int(game["info"].get("turns") or 0)
+                    rec = {
+                        "game": played,
+                        "phase": "eval",
+                        "ckpt": name,
+                        "mode": mode,
+                        "result": result,
+                        "turns": game["info"].get("turns"),
+                        "decisions": len(game["steps"]),
+                        "secs": round(time.time() - t0, 1),
+                    }
+                    with log_path.open("a") as f:
+                        f.write(json.dumps(rec) + "\n")
+            results.append(
+                {
+                    "ckpt": name,
+                    "trained_games": ckpt.get("meta", {}).get("games"),
+                    "mode": mode,
+                    "games": played,
+                    "wins": wins,
+                    "win_rate": round(wins / played, 4) if played else None,
+                    "avg_turns": round(turns / played, 1) if played else None,
+                }
+            )
+    summary = {"eval": results, "secs": round(time.time() - t0, 1)}
+    (out_dir / "eval_summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
+
+
 def _save(
     net: ForgePointerNet,
     opt: torch.optim.Optimizer,
@@ -427,6 +500,12 @@ def main() -> None:
         help="extra imitation passes over recorded decisions after them",
     )
     ap.add_argument("--bc-batch", type=int, default=256)
+    ap.add_argument(
+        "--eval-ckpts",
+        help="comma list of checkpoints to score instead of training; "
+        "relative paths resolve against the parent of --out",
+    )
+    ap.add_argument("--eval-modes", default="greedy,sample")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     cmd = bridge_command(
@@ -437,6 +516,27 @@ def main() -> None:
         args.deck_b.resolve(),
         java=args.java,
     )
+    if args.eval_ckpts:
+        names = [c for c in args.eval_ckpts.split(",") if c]
+        paths = [
+            Path(c) if Path(c).is_absolute() else args.out.parent / c
+            for c in names
+        ]
+        print(
+            json.dumps(
+                evaluate(
+                    cmd,
+                    args.forge_dir,
+                    paths,
+                    args.games,
+                    args.out,
+                    modes=[m for m in args.eval_modes.split(",") if m],
+                    seed=args.seed,
+                    labels=names,
+                )
+            )
+        )
+        return
     expert_cmd = bridge_command(
         args.forge_dir,
         args.bridge_out,

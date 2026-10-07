@@ -23,6 +23,7 @@ from manamind.models.forge_pointer import (
 )
 from manamind.training.train_forge import (
     EXPERT_DATA,
+    evaluate,
     load_expert_data,
     train,
 )
@@ -177,6 +178,55 @@ def test_train_against_fake_bridge(tmp_path: Path) -> None:
     net, m = load_pointer_net(str(out / "last.pt"))
     assert m["games"] == 4
     assert net.act(PRIORITY).reply in {"0", "1", "-1"}
+
+
+def test_evaluate_scores_checkpoints_without_training(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake.py"
+    script.write_text(FAKE)
+    views = json.dumps(
+        {"priority": PRIORITY, "attack": ATTACK, "block": BLOCK}
+    )
+    net = ForgePointerNet()
+    ckpt = tmp_path / "bc.pt"
+    torch.save(
+        {
+            "network": net.state_dict(),
+            "config": {"card_dim": 64, "state_dim": 128},
+            "meta": {"games": 1000},
+        },
+        ckpt,
+    )
+    before = {k: v.clone() for k, v in net.state_dict().items()}
+    out = tmp_path / "eval"
+    summary = evaluate(
+        [sys.executable, str(script), views],
+        None,
+        [ckpt],
+        games=4,
+        out_dir=out,
+        labels=["run/bc.pt"],
+    )
+    rows = summary["eval"]
+    assert [r["mode"] for r in rows] == ["greedy", "sample"]
+    for r in rows:
+        assert r["ckpt"] == "run/bc.pt" and r["trained_games"] == 1000
+        assert r["games"] == 4 and r["wins"] == 2 and r["win_rate"] == 0.5
+        assert r["avg_turns"] == 5.0
+    lines = [
+        json.loads(x) for x in (out / "log.jsonl").read_text().splitlines()
+    ]
+    assert len(lines) == 8 and all(x["phase"] == "eval" for x in lines)
+    assert (out / "eval_summary.json").exists()
+    assert not (out / "last.pt").exists()
+    saved = torch.load(ckpt, weights_only=False)["network"]
+    assert all(torch.equal(saved[k], before[k]) for k in before)
+
+
+def test_evaluate_rejects_unknown_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        evaluate([], None, [], 1, tmp_path, modes=["argmax"])
 
 
 def test_shaped_returns_default_is_game_result() -> None:
