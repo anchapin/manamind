@@ -122,8 +122,14 @@ class SliceTimes:
     train_step: float
 
 
-def project_seconds(args: argparse.Namespace, t: SliceTimes) -> float:
-    """Projected wall time for the whole run from one-unit timings."""
+def project_seconds(
+    args: argparse.Namespace, t: SliceTimes, done: int = 0
+) -> float:
+    """Projected wall time for the iterations still to run.
+
+    ``done`` is the last iteration a resumable checkpoint already holds,
+    so a resumed run is projected for what is left, not from scratch.
+    """
     workers = max(1, int(args.workers))
     n_ref = (
         args.eval_games
@@ -136,11 +142,29 @@ def project_seconds(args: argparse.Namespace, t: SliceTimes) -> float:
         # reference games: both seats search, same cost as self-play
         + n_ref * t.selfplay_game
     ) / workers + args.train_batches * t.train_step
-    total = args.iterations * per_iter
+    done = min(max(0, int(done)), int(args.iterations))
+    total = (args.iterations - done) * per_iter
     if args.anchor is not None and args.anchor_every > 0:
-        rounds = args.iterations // args.anchor_every
+        rounds = (
+            args.iterations // args.anchor_every - done // args.anchor_every
+        )
         total += rounds * args.anchor_games * t.selfplay_game / workers
     return total
+
+
+def done_iterations(ts: Any, checkpoint_dir: Optional[Path]) -> int:
+    """Last iteration the newest resumable checkpoint holds (0 if none).
+
+    Uses train_simple's own ``latest_resumable`` so the preflight resumes
+    from the same checkpoint ``--resume`` would.
+    """
+    path = ts.latest_resumable(checkpoint_dir)
+    if path is None:
+        return 0
+    import torch
+
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    return int(payload["iteration"])
 
 
 def time_slice(ts: Any, args: argparse.Namespace) -> SliceTimes:
@@ -201,6 +225,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--timeout-minutes", type=float, default=1440.0)
     ap.add_argument("--json-out", type=Path, default=None)
     ap.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=None,
+        help="the run's checkpoint dir; on resume, project only what is left",
+    )
+    ap.add_argument(
         "--no-timing",
         action="store_true",
         help="bounds check only (no games played)",
@@ -221,9 +251,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for e in errors:
         print(f"preflight ERROR: {e}")
     code = 2 if errors else 0
+    done = 0 if errors else done_iterations(ts, mine.checkpoint_dir)
+    report["resumed_from_iteration"] = done
+    if done:
+        print(
+            f"preflight: resuming after iteration {done} of "
+            f"{args.iterations}; projecting the remaining "
+            f"{max(0, args.iterations - done)}"
+        )
     if not errors and not mine.no_timing:
         t = time_slice(ts, args)
-        projected = project_seconds(args, t)
+        projected = project_seconds(args, t, done)
         report.update(
             {
                 "slice_seconds": {
@@ -240,7 +278,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"one train step {t.train_step * 1000:.0f}ms"
         )
         print(
-            f"preflight: projected {projected / 60:.0f} min for the full run "
+            f"preflight: projected {projected / 60:.0f} min for the "
+            f"{'remaining' if done else 'full'} run "
             f"(limit {mine.timeout_minutes:.0f} min; lower bound with "
             f"--workers {args.workers})"
         )
