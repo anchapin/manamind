@@ -57,13 +57,15 @@ jobs:
 
       - name: Preflight (bounds + wall-time projection, #68)
         # Rejects out-of-bounds args in seconds and fails when the projected
-        # run (full length, even on resume) won't fit in the job timeout.
+        # run won't fit in the job timeout. On resume it projects only the
+        # iterations left after the newest resumable checkpoint.
         shell: bash
         run: |
           mkdir -p results
           read -r -a EXTRA <<< "$TRAIN_ARGS"
           PYTHONPATH=src python scripts/preflight.py \
             --timeout-minutes 1440 \
+            --checkpoint-dir "$HOME/manamind-runs/$RUN_NAME/checkpoints" \
             --json-out "results/simple_${RUN_NAME}_preflight.json" \
             -- "${EXTRA[@]}" | tee preflight.log
           {
