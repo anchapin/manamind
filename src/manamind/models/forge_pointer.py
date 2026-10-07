@@ -332,33 +332,92 @@ def _zero(like: torch.Tensor) -> torch.Tensor:
     return like.new_zeros(())
 
 
+def life_potential(d: Dict[str, Any]) -> float:
+    """Life-total lead from the piped seat's view, in units of 20 life."""
+    life = d.get("life", [20, 20])
+    return (float(life[0]) - float(life[1])) / 20.0
+
+
+def shaped_returns(
+    reward: float,
+    potentials: Optional[Sequence[float]] = None,
+    gamma: float = 1.0,
+    shaping_coef: float = 0.0,
+) -> List[float]:
+    """Per-decision returns for one game.
+
+    Step ``k`` earns ``shaping_coef * (phi[k+1] - phi[k])`` (life-lead
+    change until the next decision) and the last step also earns the game
+    result. With ``gamma < 1`` a decision is credited mostly for what
+    happens soon after it, instead of every decision in a ~150-decision
+    game sharing the same final -1.
+    """
+    if potentials is None or shaping_coef == 0.0:
+        n = len(potentials) if potentials is not None else 0
+        rewards = [0.0] * n
+    else:
+        n = len(potentials)
+        rewards = [
+            shaping_coef * (potentials[k + 1] - potentials[k])
+            for k in range(n - 1)
+        ] + [0.0]
+    if n == 0:
+        return []
+    rewards[-1] += float(reward)
+    out = [0.0] * n
+    g = 0.0
+    for k in range(n - 1, -1, -1):
+        g = rewards[k] + gamma * g
+        out[k] = g
+    return out
+
+
 def actor_critic_loss(
     steps: Sequence[ActOutput],
     reward: float,
     value_coef: float = 0.5,
     entropy_coef: float = 0.01,
+    potentials: Optional[Sequence[float]] = None,
+    gamma: float = 1.0,
+    shaping_coef: float = 0.0,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """Monte Carlo actor-critic loss for one finished game.
 
-    Every decision gets the game result as its return (no discounting);
-    the value head is the baseline.
+    With the defaults every decision gets the game result as its return
+    (no discounting) and the value head is the baseline. ``potentials``
+    (one :func:`life_potential` per decision), ``gamma`` and
+    ``shaping_coef`` turn on life-lead shaping and discounting (#79).
+    Decisions with a single legal reply carry no policy gradient and are
+    left out of the policy and entropy terms.
     """
     if not steps:
         raise ValueError("no steps to learn from")
+    if potentials is not None and len(potentials) != len(steps):
+        raise ValueError("need one potential per step")
     logp = torch.stack([s.log_prob for s in steps])
     ent = torch.stack([s.entropy for s in steps])
     val = torch.stack([s.value for s in steps])
-    ret = torch.full_like(val, float(reward))
+    if potentials is None and gamma == 1.0:
+        ret = torch.full_like(val, float(reward))
+    else:
+        pots = (
+            list(potentials) if potentials is not None else [0.0] * len(steps)
+        )
+        ret = val.new_tensor(shaped_returns(reward, pots, gamma, shaping_coef))
     adv = (ret - val).detach()
-    policy = -(adv * logp).mean()
+    choice = (ent.detach() > 1e-6).float()
+    n_choice = choice.sum().clamp(min=1.0)
+    policy = -(adv * logp * choice).sum() / n_choice
     value = F.mse_loss(val, ret)
-    entropy = ent.mean()
+    entropy = (ent * choice).sum() / n_choice
     loss = policy + value_coef * value - entropy_coef * entropy
     stats = {
         "loss": float(loss.detach()),
         "policy": float(policy.detach()),
         "value": float(value.detach()),
         "entropy": float(entropy.detach()),
+        "adv_abs": float(adv.abs().mean()),
+        "choice_frac": float(choice.mean()),
     }
     return loss, stats
 

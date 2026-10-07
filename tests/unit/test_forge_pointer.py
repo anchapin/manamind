@@ -5,16 +5,20 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import torch
 
 from manamind.models.forge_pointer import (
     CARD_FEATURES,
     GLOBAL_FEATURES,
+    ActOutput,
     ForgePointerNet,
     actor_critic_loss,
     card_features,
     global_features,
+    life_potential,
     load_pointer_net,
+    shaped_returns,
 )
 from manamind.training.train_forge import train
 
@@ -127,7 +131,7 @@ def test_loss_backprops() -> None:
     loss, stats = actor_critic_loss(steps, 1.0)
     loss.backward()
     assert net.pass_token.grad is not None
-    assert set(stats) == {"loss", "policy", "value", "entropy"}
+    assert {"loss", "policy", "value", "entropy"} <= set(stats)
 
 
 _FAKE_SRC = """
@@ -168,3 +172,39 @@ def test_train_against_fake_bridge(tmp_path: Path) -> None:
     net, m = load_pointer_net(str(out / "last.pt"))
     assert m["games"] == 4
     assert net.act(PRIORITY).reply in {"0", "1", "-1"}
+
+
+def test_shaped_returns_default_is_game_result() -> None:
+    assert shaped_returns(-1.0, [0.0, 0.0, 0.0]) == [-1.0, -1.0, -1.0]
+
+
+def test_shaped_returns_credit_life_swings() -> None:
+    # lead goes 0 -> +0.5 -> 0; result is a loss
+    out = shaped_returns(-1.0, [0.0, 0.5, 0.0], gamma=0.5, shaping_coef=1.0)
+    # r = [+0.5, -0.5, -1.0]
+    assert out[2] == pytest.approx(-1.0)
+    assert out[1] == pytest.approx(-0.5 + 0.5 * -1.0)
+    assert out[0] == pytest.approx(0.5 + 0.5 * out[1])
+    assert out[0] > out[1]
+
+
+def test_life_potential() -> None:
+    assert life_potential({"life": [18, 20]}) == pytest.approx(-0.1)
+    assert life_potential({}) == 0.0
+
+
+def test_loss_skips_single_choice_steps() -> None:
+    v = torch.zeros((), requires_grad=True)
+    lp = torch.zeros((), requires_grad=True)
+    forced = ActOutput("-1", lp * 1.0, torch.zeros(()), v * 1.0)
+    real = ActOutput("0", lp * 1.0 - 0.7, torch.tensor(0.69), v * 1.0)
+    _, stats = actor_critic_loss(
+        [forced, real],
+        -1.0,
+        potentials=[0.0, 0.1],
+        gamma=0.9,
+        shaping_coef=1.0,
+    )
+    assert stats["choice_frac"] == pytest.approx(0.5)
+    assert stats["entropy"] == pytest.approx(0.69, abs=1e-4)
+    assert stats["adv_abs"] > 0
