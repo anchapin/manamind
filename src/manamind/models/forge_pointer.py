@@ -177,7 +177,10 @@ class ForgePointerNet(nn.Module):
         ids = torch.tensor(
             [name_bucket(str(c.get("name", ""))) for c in cards], device=dev
         )
-        return self.card_mlp(torch.cat([feats, self.name_emb(ids)], dim=-1))
+        out: torch.Tensor = self.card_mlp(
+            torch.cat([feats, self.name_emb(ids)], dim=-1)
+        )
+        return out
 
     def _pool(self, emb: torch.Tensor) -> torch.Tensor:
         if emb.shape[0] == 0:
@@ -190,7 +193,8 @@ class ForgePointerNet(nn.Module):
         ids = torch.tensor(
             [name_bucket(str(n)) for n in names], device=self._device()
         )
-        return self.name_emb(ids).mean(0)
+        mean: torch.Tensor = self.name_emb(ids).mean(0)
+        return mean
 
     def encode_state(self, d: Decision) -> torch.Tensor:
         """``[state_dim]`` embedding of the seat's visible view."""
@@ -204,7 +208,8 @@ class ForgePointerNet(nn.Module):
                 global_features(d), dtype=torch.float32, device=self._device()
             ),
         ]
-        return self.state_mlp(torch.cat(parts))
+        state: torch.Tensor = self.state_mlp(torch.cat(parts))
+        return state
 
     # -- heads ------------------------------------------------------------
     def value(self, state: torch.Tensor) -> torch.Tensor:
@@ -215,7 +220,7 @@ class ForgePointerNet(nn.Module):
         self, state: torch.Tensor, options: Sequence[Dict[str, Any]]
     ) -> torch.Tensor:
         """``[len(options) + 1]`` logits; the last one is pass."""
-        opts = [self.pass_token]
+        opts: List[torch.Tensor] = [self.pass_token]
         if options:
             cards = self.encode_cards([o.get("card", {}) for o in options])
             flags = torch.tensor(
@@ -229,7 +234,10 @@ class ForgePointerNet(nn.Module):
             opts = list(emb) + opts
         stacked = torch.stack(opts)
         s = state.unsqueeze(0).expand(stacked.shape[0], -1)
-        return self.priority_head(torch.cat([s, stacked], -1)).squeeze(-1)
+        logits: torch.Tensor = self.priority_head(
+            torch.cat([s, stacked], -1)
+        ).squeeze(-1)
+        return logits
 
     def attack_logits(
         self, state: torch.Tensor, creatures: Sequence[Dict[str, Any]]
@@ -237,7 +245,10 @@ class ForgePointerNet(nn.Module):
         """``[n]`` attack logits, one per eligible creature."""
         emb = self.encode_cards(creatures)
         s = state.unsqueeze(0).expand(emb.shape[0], -1)
-        return self.attack_head(torch.cat([s, emb], -1)).squeeze(-1)
+        logits: torch.Tensor = self.attack_head(
+            torch.cat([s, emb], -1)
+        ).squeeze(-1)
+        return logits
 
     def block_logits(
         self,
