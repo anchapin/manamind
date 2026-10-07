@@ -52,7 +52,9 @@ class ForgeSession:
         java: str = "java",
         xmx: str = "1500m",
     ) -> None:
-        jar = next(forge_dir.glob("forge-gui-desktop-*-jar-with-dependencies.jar"))
+        jar = next(
+            forge_dir.glob("forge-gui-desktop-*-jar-with-dependencies.jar")
+        )
         cmd = [
             java,
             f"-Xmx{xmx}",

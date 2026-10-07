@@ -52,7 +52,9 @@ decision is sent to an external process as one line of JSON (prefixed
 `@@MM ` on stdout, since Forge logs there too) and the answer comes back on
 stdin. Each message carries only what that seat can see: turn, phase, both
 life totals, own hand, opponent hand size, both battlefields, library sizes,
-and the legal options. `python/forge_client.py` launches one JVM for many
+and the legal options. Cards come with name, type line, mana cost, mana
+value, power/toughness, tapped and summoning-sick flags; graveyards are
+listed by name. `python/forge_client.py` launches one JVM for many
 games and answers with a random policy:
 
 ```bash
@@ -78,3 +80,14 @@ to Forge AI and are counted as fallbacks.
 The pipe adds little over the in-JVM random seat (79/s with the opponent's
 thinking included). Turning the options into manamind's encoder and action
 space is the next step.
+
+## ForgeEnv (Python package)
+
+`manamind.forge_interface.ForgeEnv` wraps the pipe as a decision-driven
+environment: `reset()` returns the first decision of the next game, and
+`step(reply)` answers it and returns the next one, or `done` with reward
++1/-1/0 when the game ends. Build the command with `bridge_command(...)`
+and the replies with `priority_reply`, `attack_reply`, `block_reply`.
+Unit tests (`tests/unit/test_forge_env.py`) use a fake bridge, so CI
+doesn't need Forge or Java. Smoke run against real Forge: 6 games,
+964 decisions in 23 s, 0 fallbacks or errors.
