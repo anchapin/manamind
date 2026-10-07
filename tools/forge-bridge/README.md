@@ -44,3 +44,37 @@ seats are ours, so the controller-side number is the better estimate of the
 ceiling. 450 "AI failed to play" log lines: `canPlaySa` accepted a spell
 whose mana payment then failed (e.g. Gravewaker); the engine recovered each
 time.
+
+## PipeBench + Python client
+
+`PipeBench` is the same controller, but every priority, attack and block
+decision is sent to an external process as one line of JSON (prefixed
+`@@MM ` on stdout, since Forge logs there too) and the answer comes back on
+stdin. Each message carries only what that seat can see: turn, phase, both
+life totals, own hand, opponent hand size, both battlefields, library sizes,
+and the legal options. `python/forge_client.py` launches one JVM for many
+games and answers with a random policy:
+
+```bash
+python tools/forge-bridge/python/forge_client.py \
+  --forge-dir "$FORGE_DIR" --java "$JAVA_HOME/bin/java" --games 40 rg.dck ub.dck
+```
+
+Protocol replies: `priority` takes an option index (`len(options)` = pass);
+`attack` takes space-separated creature indices; `block` takes
+space-separated `blocker:attacker` pairs. Illegal combat replies fall back
+to Forge AI and are counted as fallbacks.
+
+### Results (same decks, 40 games, Python random policy)
+
+| | |
+|---|---|
+| crashes / fallbacks / parse errors | 0 / 0 / 0 |
+| mean turns | 15.6 |
+| Python-side decisions | 6,187 |
+| wall time (after JVM ready) | 93.5 s → 66 decisions/s, incl. Forge AI opponent |
+| time spent in the Python policy | 0.10 s |
+
+The pipe adds little over the in-JVM random seat (79/s with the opponent's
+thinking included). Turning the options into manamind's encoder and action
+space is the next step.
