@@ -16,11 +16,16 @@ from manamind.models.forge_pointer import (
     actor_critic_loss,
     card_features,
     global_features,
+    imitation_loss,
     life_potential,
     load_pointer_net,
     shaped_returns,
 )
-from manamind.training.train_forge import train
+from manamind.training.train_forge import (
+    EXPERT_DATA,
+    load_expert_data,
+    train,
+)
 
 BEAR = {
     "name": "Grizzly Bears",
@@ -208,3 +213,144 @@ def test_loss_skips_single_choice_steps() -> None:
     assert stats["choice_frac"] == pytest.approx(0.5)
     assert stats["entropy"] == pytest.approx(0.69, abs=1e-4)
     assert stats["adv_abs"] > 0
+
+
+# -- imitation warm start (#79) ---------------------------------------------
+def _labelled() -> list:
+    # ATTACK and BLOCK list identical bears, so only labels that treat them
+    # alike are learnable: attack with both, block with none.
+    return [
+        dict(PRIORITY, expert=1),
+        dict(ATTACK, expert=[0, 1]),
+        dict(BLOCK, expert=[]),
+    ]
+
+
+def test_imitate_scores_expert_choice() -> None:
+    net = ForgePointerNet()
+    outs = [net.imitate(d) for d in _labelled()]
+    assert all(o.labelled and o.choice for o in outs)
+    assert all(float(o.log_prob.detach()) <= 0.0 for o in outs)
+    # priority: log-prob of option 1 under the softmax over 2 options + pass
+    state = net.encode_state(PRIORITY)
+    ref = torch.log_softmax(
+        net.priority_logits(state, PRIORITY["options"]), -1
+    )[1]
+    assert torch.allclose(outs[0].log_prob, ref)
+
+
+def test_imitate_skips_unusable_labels() -> None:
+    net = ForgePointerNet()
+    assert not net.imitate(PRIORITY).labelled  # no expert field
+    assert not net.imitate(dict(PRIORITY, expert=-2)).labelled
+    passing = net.imitate(dict(PRIORITY, options=[], expert=0))
+    assert passing.labelled and not passing.choice
+
+
+def test_imitation_loss_backprops_and_learns() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    opt = torch.optim.Adam(net.parameters(), lr=1e-2)
+    data = _labelled()
+    first = None
+    for _ in range(60):
+        loss, stats = imitation_loss(
+            [net.imitate(d) for d in data], [1.0, 1.0, 1.0]
+        )
+        first = stats["bc_nll"] if first is None else first
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    assert stats["bc_nll"] < 0.1 * first
+    assert stats["bc_acc"] == 1.0 and stats["labelled_frac"] == 1.0
+    assert net.act(data[0], greedy=True).reply == "1"
+    assert net.act(data[1], greedy=True).reply == "0 1"
+    assert net.act(data[2], greedy=True).reply == ""
+
+
+_EXPERT_FAKE_SRC = """
+    import json, sys
+    VIEW = json.loads(sys.argv[1])
+    expert = "-Dmanamind.expert=true" in sys.argv
+    def out(m):
+        print("@@MM " + json.dumps(m), flush=True)
+    out({"t": "ready"})
+    n = 0
+    for g in range(6):
+        for kind in ("priority", "attack", "block"):
+            m = dict(VIEW[kind])
+            if not expert:
+                m.pop("expert", None)
+            out(m)
+            reply = sys.stdin.readline().strip()
+            assert (reply == "e") == expert, reply
+            n += 1
+        out({"t": "game_over", "game": g,
+             "result": "win" if g % 2 else "loss", "turns": 5})
+    out({"t": "done", "decisions": n, "fallbacks": 0, "errors": 0})
+    """
+EXPERT_FAKE = textwrap.dedent(_EXPERT_FAKE_SRC)
+
+
+def test_train_imitates_then_switches_to_rl(tmp_path: Path) -> None:
+    script = tmp_path / "fake.py"
+    script.write_text(EXPERT_FAKE)
+    p, a, b = _labelled()
+    views = json.dumps({"priority": p, "attack": a, "block": b})
+    cmd = [sys.executable, str(script), views]
+    out = tmp_path / "run"
+    meta = train(
+        cmd,
+        None,
+        games=6,
+        out_dir=out,
+        update_every=2,
+        expert_command=cmd + ["-Dmanamind.expert=true"],
+        expert_games=4,
+        bc_epoch_count=2,
+        bc_batch=4,
+    )
+    assert meta["games"] == 6 and meta["bc_done"]
+    assert meta["rl_games_this_run"] == 2 and meta["wins"] == 1
+    recs = [
+        json.loads(x) for x in (out / "log.jsonl").read_text().splitlines()
+    ]
+    phases = [r.get("phase") for r in recs if "game" in r]
+    assert phases == ["imitate"] * 4 + ["rl"] * 2
+    epochs = [r for r in recs if "bc_epoch" in r]
+    assert [r["bc_epoch"] for r in epochs] == [1, 2]
+    assert epochs[0]["train_rows"] == 12 and "val_rows" not in epochs[0]
+    assert (out / "bc.pt").exists()
+    games = load_expert_data(out / EXPERT_DATA)
+    assert len(games) == 4 and len(games[0]["decisions"]) == 3
+    assert games[1]["returns"] == [1.0, 1.0, 1.0]
+
+
+def test_resume_past_imitation_goes_straight_to_rl(tmp_path: Path) -> None:
+    script = tmp_path / "fake.py"
+    script.write_text(EXPERT_FAKE)
+    p, a, b = _labelled()
+    cmd = [
+        sys.executable,
+        str(script),
+        json.dumps({"priority": p, "attack": a, "block": b}),
+    ]
+    out = tmp_path / "run"
+    train(
+        cmd,
+        None,
+        games=2,
+        out_dir=out,
+        expert_command=cmd + ["-Dmanamind.expert=true"],
+        expert_games=2,
+    )
+    meta = train(
+        cmd,
+        None,
+        games=2,
+        out_dir=out,
+        resume=out / "last.pt",
+        expert_command=cmd + ["-Dmanamind.expert=true"],
+        expert_games=2,
+    )
+    assert meta["games"] == 4 and meta["rl_games_this_run"] == 2

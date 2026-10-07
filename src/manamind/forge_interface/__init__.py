@@ -11,6 +11,7 @@ older py4j-era stubs; ``ForgeEnv`` replaces them.
 
 from manamind.forge_interface.forge_client import ForgeClient
 from manamind.forge_interface.forge_env import (
+    EXPERT_REPLY,
     ForgeBridgeError,
     ForgeEnv,
     StepResult,
@@ -26,6 +27,7 @@ from manamind.forge_interface.game_runner import (
 from manamind.forge_interface.state_parser import ForgeStateParser
 
 __all__ = [
+    "EXPERT_REPLY",
     "ForgeBridgeError",
     "ForgeClient",
     "ForgeEnv",

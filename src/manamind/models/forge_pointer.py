@@ -327,6 +327,109 @@ class ForgePointerNet(nn.Module):
             )
         raise ValueError(f"unknown decision type {t!r}")
 
+    # -- imitation (#79) ----------------------------------------------------
+    def imitate(self, d: Decision) -> "ImitateOutput":
+        """Score Forge AI's own choice (``d["expert"]``) under this policy.
+
+        ``labelled`` is False when the decision has no usable expert label
+        (missing, or Forge's pick isn't one of the listed options);
+        ``choice`` is False when there was only one legal reply.
+        """
+        state = self.encode_state(d)
+        value = self.value(state)
+        t = d.get("t")
+        expert = d.get("expert")
+        none = ImitateOutput(_zero(state), value, False, False, False)
+        if expert is None:
+            return none
+        if t == "priority":
+            options = d.get("options", [])
+            k = int(expert)
+            if k < 0 or k > len(options):
+                return none
+            logits = self.priority_logits(state, options)
+            logp = F.log_softmax(logits, -1)[k]
+            agree = int(logits.argmax()) == k
+            return ImitateOutput(logp, value, True, len(options) > 0, agree)
+        if t == "attack":
+            creatures = d.get("options", [])
+            if not creatures:
+                return none
+            target = state.new_zeros(len(creatures))
+            for i in expert:
+                if 0 <= int(i) < len(creatures):
+                    target[int(i)] = 1.0
+            logits = self.attack_logits(state, creatures)
+            logp = -F.binary_cross_entropy_with_logits(
+                logits, target, reduction="sum"
+            )
+            agree = bool(((logits > 0).float() == target).all())
+            return ImitateOutput(logp, value, True, True, agree)
+        if t == "block":
+            blockers = d.get("blockers", [])
+            attackers = d.get("attackers", [])
+            if not blockers or not attackers:
+                return none
+            labels = [len(attackers)] * len(blockers)
+            for pair in expert:
+                b, a = int(pair[0]), int(pair[1])
+                if 0 <= b < len(blockers) and 0 <= a < len(attackers):
+                    labels[b] = a
+            tgt = torch.tensor(labels, device=self._device())
+            logits = self.block_logits(state, blockers, attackers)
+            logp = -F.cross_entropy(logits, tgt, reduction="sum")
+            agree = bool((logits.argmax(-1) == tgt).all())
+            return ImitateOutput(logp, value, True, True, agree)
+        raise ValueError(f"unknown decision type {t!r}")
+
+
+@dataclass
+class ImitateOutput:
+    """Log-probability of Forge AI's choice plus what training needs."""
+
+    log_prob: torch.Tensor
+    value: torch.Tensor
+    labelled: bool
+    choice: bool
+    agree: bool
+
+
+def imitation_loss(
+    steps: Sequence[ImitateOutput],
+    returns: Sequence[float],
+    value_coef: float = 0.5,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """Behaviour-cloning loss on Forge AI's choices (#79).
+
+    Policy term: mean negative log-likelihood of the expert's reply over
+    labelled decisions that had more than one legal reply. Value term: MSE
+    against the per-decision return of the game Forge AI played, so the
+    value head also starts out calibrated.
+    """
+    if not steps:
+        raise ValueError("no steps to learn from")
+    if len(returns) != len(steps):
+        raise ValueError("need one return per step")
+    val = torch.stack([s.value for s in steps])
+    ret = val.new_tensor(list(returns))
+    value = F.mse_loss(val, ret)
+    used = [s for s in steps if s.labelled and s.choice]
+    if used:
+        nll = -torch.stack([s.log_prob for s in used]).mean()
+        acc = sum(s.agree for s in used) / len(used)
+    else:
+        nll = value.new_zeros(())
+        acc = 0.0
+    loss = nll + value_coef * value
+    stats = {
+        "loss": float(loss.detach()),
+        "bc_nll": float(nll.detach()),
+        "bc_acc": float(acc),
+        "value": float(value.detach()),
+        "labelled_frac": len(used) / len(steps),
+    }
+    return loss, stats
+
 
 def _zero(like: torch.Tensor) -> torch.Tensor:
     return like.new_zeros(())
