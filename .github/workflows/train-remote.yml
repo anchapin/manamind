@@ -55,6 +55,24 @@ jobs:
           "$VENV/bin/pip" install -q -e .
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
+      - name: Preflight (bounds + wall-time projection, #68)
+        # Rejects out-of-bounds args in seconds and fails when the projected
+        # run (full length, even on resume) won't fit in the job timeout.
+        shell: bash
+        run: |
+          mkdir -p results
+          read -r -a EXTRA <<< "$TRAIN_ARGS"
+          PYTHONPATH=src python scripts/preflight.py \
+            --timeout-minutes 1440 \
+            --json-out "results/simple_${RUN_NAME}_preflight.json" \
+            -- "${EXTRA[@]}" | tee preflight.log
+          {
+            echo "### Preflight"
+            echo '```'
+            cat preflight.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Train (resumes if this run name already has checkpoints)
         # Without pipefail, `python ... | tee` reports the exit code of tee,
         # so a killed or crashed trainer still shows as a green step.
