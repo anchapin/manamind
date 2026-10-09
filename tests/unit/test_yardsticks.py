@@ -1,5 +1,6 @@
 import json
 import math
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from manamind.evaluation.yardsticks import (
     main,
     resolve_ckpts,
     run_elo,
+    run_pn,
     versus_baseline,
     wilson_interval,
 )
@@ -176,3 +178,91 @@ def test_elo_leg_needs_two_existing_ckpts(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match="leaves --runs-dir"):
         run_elo(build_parser().parse_args(base + ["--ckpts", "../x,y"]))
+
+
+def _pn_result(win: int, loss: int, draw: int, errors: int = 0) -> dict:
+    n = win + loss + draw
+    return {
+        "games": n,
+        "win": win,
+        "loss": loss,
+        "draw": draw,
+        "score": round((win + draw / 2) / n, 3),
+        "ci95": [0.1, 0.4],
+        "byDeck": {
+            "red": {"win": win, "loss": 0, "draw": 0},
+            "green": {"win": 0, "loss": loss, "draw": draw},
+        },
+        "errorCount": errors,
+    }
+
+
+def test_pn_leg_runs_each_ckpt_and_mode(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    (runs / "r1").mkdir(parents=True)
+    (runs / "r1" / "forge_pointer.onnx").write_bytes(b"")
+    (runs / "b.onnx").write_bytes(b"")
+    calls = []
+
+    def runner(cmd: list, cwd: Path) -> None:
+        calls.append((cmd, cwd))
+        out = Path(cmd[cmd.index("--out") + 1])
+        errors = 2 if "--sample" in cmd and "b.onnx" in cmd[6] else 0
+        out.write_text(json.dumps(_pn_result(3, 4, 1, errors)))
+        if errors:  # yardstick-pn.ts exits 1 but keeps its results
+            raise subprocess.CalledProcessError(1, cmd)
+
+    args = build_parser().parse_args(
+        ["pn", "--pn-dir", str(tmp_path), "--runs-dir", str(runs)]
+        + ["--ckpts", "r1,b.onnx", "--games", "8", "--out", str(tmp_path)]
+    )
+    table = run_pn(args, runner)
+    assert len(calls) == 4 and all(cwd == tmp_path for _, cwd in calls)
+    assert all(
+        c[:5] == ["npx", "tsx", "scripts/yardstick-pn.ts", "--agent", "model"]
+        for c, _ in calls
+    )
+    assert ["--sample" in c for c, _ in calls] == [False, True] * 2
+    assert all(c[c.index("--games") + 1] == "8" for c, _ in calls)
+    rows = json.loads((tmp_path / "pn.json").read_text())["rows"]
+    assert [(r["ckpt"], r["mode"]) for r in rows] == [
+        ("r1", "greedy"),
+        ("r1", "sample"),
+        ("b.onnx", "greedy"),
+        ("b.onnx", "sample"),
+    ]
+    assert rows[0]["score"] == 0.438 and rows[0]["red"] == 1.0
+    assert rows[0]["green"] == 0.1 and rows[3]["errors"] == 2
+    assert "| `r1` | greedy | 8 | 3-4-1 | 43.8% | 10.0%-40.0% |" in table
+
+
+def test_pn_leg_checks_its_inputs(tmp_path: Path) -> None:
+    base = ["pn", "--pn-dir", str(tmp_path), "--out", str(tmp_path / "o")]
+    with pytest.raises(SystemExit, match="--ckpts"):
+        run_pn(build_parser().parse_args(base))
+    with pytest.raises(SystemExit, match="even"):
+        run_pn(
+            build_parser().parse_args(base + ["--ckpts", "x", "--games", "7"])
+        )
+    with pytest.raises(SystemExit, match="--modes"):
+        run_pn(
+            build_parser().parse_args(
+                base + ["--ckpts", "x", "--modes", "best"]
+            )
+        )
+    with pytest.raises(SystemExit, match="missing checkpoints"):
+        run_pn(
+            build_parser().parse_args(
+                base + ["--runs-dir", str(tmp_path), "--ckpts", "x"]
+            )
+        )
+
+    def runner(cmd: list, cwd: Path) -> None:
+        raise subprocess.CalledProcessError(1, cmd)
+
+    (tmp_path / "x.onnx").write_bytes(b"")
+    args = build_parser().parse_args(
+        base + ["--runs-dir", str(tmp_path), "--ckpts", "x.onnx"]
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pn(args, runner)

@@ -18,6 +18,13 @@ results into Elo, anchored at the first checkpoint = 0. A checkpoint is an
 ONNX file, a directory holding ``forge_pointer.onnx``, or a ``.pt`` that is
 exported to ONNX first. Results go to ``<out>/elo.json`` and ``elo.md``.
 
+``pn`` plays each checkpoint against the Planar Nexus Expert AI through
+``scripts/yardstick-pn.ts --agent model`` (the #2614 Mono-Red vs
+Mono-Green pair, decks swapped per seed): ``--games`` games per mode, the
+search's greedy pick and a draw from its policy. Results go to
+``<out>/pn.json`` and ``pn.md``: score (a draw counts half), Wilson 95%
+interval, and the score with each deck.
+
 Example::
 
     PYTHONPATH=src python -m manamind.evaluation.yardsticks forge \\
@@ -330,6 +337,97 @@ def run_elo(args: argparse.Namespace, runner: Runner = run_cmd) -> str:
 RESULT_KEYS = ("games", "wins", "losses", "draws", "score", "ci95")
 
 
+def _deck_score(d: Dict[str, int]) -> Optional[float]:
+    n = d.get("win", 0) + d.get("loss", 0) + d.get("draw", 0)
+    return (d.get("win", 0) + d.get("draw", 0) / 2) / n if n else None
+
+
+def pn_table(rows: Sequence[Dict[str, Any]]) -> str:
+    lines = [
+        "| Checkpoint | Mode | Games | W-L-D | Score | 95% CI "
+        "| as Red | as Green | Errors |",
+        "|---|---|---:|:---:|---:|:---:|---:|---:|---:|",
+    ]
+    for r in rows:
+        lo, hi = r["ci95"]
+        lines.append(
+            f"| `{r['ckpt']}` | {r['mode']} | {r['games']} "
+            f"| {r['win']}-{r['loss']}-{r['draw']} | {_pct(r['score'])} "
+            f"| {_pct(lo)}-{_pct(hi)} | {_pct(r['red'])} "
+            f"| {_pct(r['green'])} | {r['errors']} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def run_pn(args: argparse.Namespace, runner: Runner = run_cmd) -> str:
+    names = [c for c in (args.ckpts or "").split(",") if c]
+    if not names:
+        raise SystemExit("--ckpts is needed")
+    if args.games <= 0 or args.games % 2:
+        raise SystemExit("--games must be a positive even number")
+    modes = [m for m in args.modes.split(",") if m]
+    if not modes or any(m not in ("greedy", "sample") for m in modes):
+        raise SystemExit("--modes takes greedy and/or sample")
+    paths = resolve_ckpts(names, args.runs_dir)
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        raise SystemExit(f"missing checkpoints: {', '.join(missing)}")
+    out: Path = args.out
+    (out / "pn_runs").mkdir(parents=True, exist_ok=True)
+    rows: List[Dict[str, Any]] = []
+    for k, (name, path) in enumerate(zip(names, paths)):
+        model = onnx_for(path, out / "onnx", k).resolve()
+        for mode in modes:
+            res_path = (out / "pn_runs" / f"{k:02d}_{mode}.json").resolve()
+            cmd = [
+                "npx",
+                "tsx",
+                "scripts/yardstick-pn.ts",
+                "--agent",
+                "model",
+                "--model",
+                str(model),
+                "--games",
+                str(args.games),
+                "--seed",
+                str(args.seed),
+                "--sims",
+                str(args.sims),
+                "--out",
+                str(res_path),
+            ]
+            if mode == "sample":
+                cmd.insert(-2, "--sample")
+            try:
+                runner(cmd, args.pn_dir)
+            except subprocess.CalledProcessError:
+                # The script exits 1 when some games errored but still
+                # writes its results; a missing file is a real failure.
+                if not res_path.exists():
+                    raise
+            r = json.loads(res_path.read_text())
+            by_deck = r.get("byDeck", {})
+            rows.append(
+                {
+                    "ckpt": name,
+                    "mode": mode,
+                    "games": r["games"],
+                    "win": r["win"],
+                    "loss": r["loss"],
+                    "draw": r["draw"],
+                    "score": r["score"],
+                    "ci95": r["ci95"],
+                    "red": _deck_score(by_deck.get("red", {})),
+                    "green": _deck_score(by_deck.get("green", {})),
+                    "errors": r.get("errorCount", 0),
+                }
+            )
+    (out / "pn.json").write_text(json.dumps({"rows": rows}, indent=2) + "\n")
+    table = pn_table(rows)
+    (out / "pn.md").write_text(table)
+    return table
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="leg", required=True)
@@ -359,6 +457,15 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--sims", type=int, default=16)
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("pn", help="score checkpoints vs PN Expert AI")
+    p.add_argument("--pn-dir", type=Path, required=True)
+    p.add_argument("--ckpts", help="comma list: .onnx, .pt or run dirs")
+    p.add_argument("--runs-dir", type=Path, default=Path("."))
+    p.add_argument("--games", type=int, default=200)
+    p.add_argument("--modes", default="greedy,sample")
+    p.add_argument("--sims", type=int, default=16)
+    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--out", type=Path, required=True)
     return ap
 
 
@@ -368,6 +475,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         print(run_forge(args), end="")
     elif args.leg == "elo":
         print(run_elo(args), end="")
+    elif args.leg == "pn":
+        print(run_pn(args), end="")
 
 
 if __name__ == "__main__":
