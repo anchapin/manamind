@@ -25,7 +25,7 @@ on:
       init:
         description: "Round-0 checkpoint under ~/manamind-runs for a new run (blank = fresh net)"
         required: false
-        default: "forge_bc/bc.pt"
+        default: "forge_bc_seed0/bc.pt"
       rounds:
         description: "Rounds this dispatch"
         required: true
@@ -91,6 +91,12 @@ jobs:
       - name: Planar Nexus dependencies
         working-directory: pn
         run: npm ci --no-audit --no-fund
+
+      - name: Planar Nexus card-script index
+        # index.generated.ts is gitignored in planar-nexus; its npm
+        # pre-scripts build it, but `npx tsx scripts/...` skips them.
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
 
       - name: Python environment (one cached venv per runner instance)
         run: |

@@ -103,6 +103,12 @@ jobs:
         working-directory: pn
         run: npm ci --no-audit --no-fund
 
+      - name: Planar Nexus card-script index
+        # index.generated.ts is gitignored in planar-nexus; its npm
+        # pre-scripts build it, but `npx tsx scripts/...` skips them.
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
+
       - name: Python environment (one cached venv per runner instance)
         run: |
           VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
