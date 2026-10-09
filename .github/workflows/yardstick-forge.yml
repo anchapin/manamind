@@ -1,0 +1,148 @@
+# Scores checkpoints against stock Forge AI (#85 yardstick, vs Forge leg).
+# Runs on Alex's home PC (self-hosted, label "manamind-train") because the
+# checkpoints live there under ~/manamind-runs. Manual dispatch only.
+# Posts the results table to an issue (default #85) and the job summary.
+name: Yardstick vs Forge
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to run"
+        required: true
+        default: "main"
+      ckpts:
+        description: "Comma list of checkpoints under ~/manamind-runs (e.g. forge_bc/bc.pt,forge_rl/last.pt)"
+        required: true
+      games:
+        description: "Games per checkpoint and mode (even keeps seats/decks balanced)"
+        required: true
+        default: "200"
+      modes:
+        description: "Eval modes"
+        required: true
+        default: "greedy,sample"
+      issue:
+        description: "Issue number to post the table to (blank to skip)"
+        required: false
+        default: "85"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-yardstick-forge
+  cancel-in-progress: false
+
+jobs:
+  forge:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 720
+    env:
+      CKPTS: ${{ github.event.inputs.ckpts }}
+      GAMES: ${{ github.event.inputs.games }}
+      MODES: ${{ github.event.inputs.modes }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      REF: ${{ github.event.inputs.ref }}
+      FORGE_VERSION: "2.0.15"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Validate inputs
+        run: |
+          [[ "$CKPTS" =~ ^[A-Za-z0-9._/,-]+$ ]] || { echo "bad ckpts"; exit 1; }
+          [[ "$CKPTS" != *..* ]] || { echo "ckpts must stay under ~/manamind-runs"; exit 1; }
+          [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 ]] || { echo "bad games"; exit 1; }
+          [[ "$MODES" =~ ^(greedy|sample)(,(greedy|sample))?$ ]] || { echo "bad modes"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e .
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Forge + JDK 17 (cached in $HOME)
+        shell: bash
+        run: |
+          set -euo pipefail
+          FORGE_DIR="$HOME/forge-$FORGE_VERSION"
+          if ! ls "$FORGE_DIR"/forge-gui-desktop-*-jar-with-dependencies.jar >/dev/null 2>&1; then
+            mkdir -p "$FORGE_DIR"
+            curl -fsSL -o /tmp/forge.tar.bz2 \
+              "https://github.com/Card-Forge/forge/releases/download/forge-$FORGE_VERSION/forge-installer-$FORGE_VERSION.tar.bz2"
+            python3 -c "import tarfile,sys; tarfile.open('/tmp/forge.tar.bz2').extractall(sys.argv[1])" "$FORGE_DIR"
+            rm -f /tmp/forge.tar.bz2
+            JAR="$(find "$FORGE_DIR" -name 'forge-gui-desktop-*-jar-with-dependencies.jar' | head -1)"
+            SUB="$(dirname "$JAR")"
+            if [ "$SUB" != "$FORGE_DIR" ]; then
+              shopt -s dotglob; mv "$SUB"/* "$FORGE_DIR"/
+            fi
+          fi
+          mkdir -p "$FORGE_DIR/home/.forge"
+          JAVA_BIN=""
+          if command -v java >/dev/null; then
+            V="$(java -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.specification.version/{print $2}')"
+            [ "${V%%.*}" -ge 17 ] 2>/dev/null && JAVA_BIN="$(dirname "$(readlink -f "$(command -v java)")")"
+          fi
+          if [ -z "$JAVA_BIN" ]; then
+            JDK="$HOME/forge-jdk17"
+            if [ ! -x "$JDK/bin/java" ]; then
+              mkdir -p "$JDK"
+              curl -fsSL -o /tmp/jdk.tgz \
+                "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
+              tar -xzf /tmp/jdk.tgz -C "$JDK" --strip-components=1
+              rm -f /tmp/jdk.tgz
+            fi
+            JAVA_BIN="$JDK/bin"
+          fi
+          "$JAVA_BIN/java" -version
+          echo "FORGE_DIR=$FORGE_DIR" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$(dirname "$JAVA_BIN")" >> "$GITHUB_ENV"
+
+      - name: Build bridge
+        run: tools/forge-bridge/build.sh
+
+      - name: Score checkpoints vs Forge AI
+        shell: bash
+        run: |
+          set -o pipefail
+          OUT="results/yardstick_forge_${GITHUB_RUN_ID}"
+          mkdir -p "$OUT"
+          PYTHONPATH=src python -m manamind.evaluation.yardsticks forge \
+            --forge-dir "$FORGE_DIR" --java "$JAVA_HOME/bin/java" \
+            --runs-dir "$HOME/manamind-runs" --ckpts "$CKPTS" \
+            --games "$GAMES" --modes "$MODES" --out "$OUT" 2>&1 \
+            | grep -v '^\(DEBUG\|INFO\)' | tail -n 500 > "$OUT/run.log"
+          cat "$OUT/forge.md"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Post table
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            cat "$OUT/forge.md"
+            echo
+            echo "_${GAMES} games per checkpoint and mode, seats and decks alternated (rg.dck vs ub.dck). [Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}), ref \`${REF}\`._"
+          } > "$OUT/comment.md"
+          cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$OUT/comment.md"
+          fi
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yardstick-forge-${{ github.run_id }}
+          path: results/yardstick_forge_*
