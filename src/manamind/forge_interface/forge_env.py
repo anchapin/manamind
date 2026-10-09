@@ -36,6 +36,9 @@ class StepResult:
     info: Dict[str, Any] = field(default_factory=dict)
 
 
+EXPERT_REPLY = "e"
+
+
 def priority_reply(option: Optional[int]) -> str:
     """Encode a priority choice; ``None`` passes priority."""
     return "-1" if option is None else str(option)
@@ -59,8 +62,13 @@ def bridge_command(
     deck_b: Path,
     java: str = "java",
     xmx: str = "1500m",
+    expert: bool = False,
 ) -> List[str]:
-    """Build the JVM command line for ``PipeBench``."""
+    """Build the JVM command line for ``PipeBench``.
+
+    ``expert`` labels every decision with Forge AI's own choice and lets the
+    driver reply ``"e"`` to play it (#79).
+    """
     jars = sorted(
         forge_dir.glob("forge-gui-desktop-*-jar-with-dependencies.jar")
     )
@@ -70,6 +78,7 @@ def bridge_command(
         java,
         f"-Xmx{xmx}",
         f"-Duser.home={forge_dir / 'home'}",
+        *(["-Dmanamind.expert=true"] if expert else []),
         "-cp",
         f"{bridge_out}:{jars[0]}",
         "manamind.forge.PipeBench",

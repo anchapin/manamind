@@ -24,12 +24,33 @@ import java.util.*;
  *   priority: an option index, where index == options.length means pass
  *   attack:   space-separated indices of creatures to attack with (may be empty)
  *   block:    space-separated "blocker:attacker" index pairs (may be empty)
+ *
+ * With -Dmanamind.expert=true every decision also carries "expert": what
+ * Forge's own AI would do in this seat (priority: option index, where
+ * options.length is pass and -2 means its pick is not in the list;
+ * attack: attacker indices; block: [blocker, attacker] pairs). Replying
+ * "e" plays the AI's own choice, so the piped seat is Forge AI and the
+ * stream is a labelled imitation dataset (#79).
  */
 public class PipeBench {
     static final String TAG = "@@MM ";
     static PrintStream proto;
     static BufferedReader in;
     static long decisions = 0, fallbacks = 0, errors = 0;
+    static final boolean EXPERT = Boolean.getBoolean("manamind.expert");
+    static long followed = 0, unmatched = 0;
+
+    static boolean isE(String r) { return EXPERT && r.equals("e"); }
+
+    /** Index of the AI's pick in our option list, or -2 if it isn't there. */
+    static int indexOf(List<SpellAbility> legal, SpellAbility s) {
+        for (int i = 0; i < legal.size(); i++) if (legal.get(i) == s) return i;
+        for (int i = 0; i < legal.size(); i++) {
+            SpellAbility o = legal.get(i);
+            if (o.getHostCard() == s.getHostCard() && o.toString().equals(s.toString())) return i;
+        }
+        return -2;
+    }
 
     static String q(String s) {
         StringBuilder b = new StringBuilder("\"");
@@ -115,7 +136,22 @@ public class PipeBench {
                 opts.add("{\"text\":" + q(sa.getHostCard().getName() + " | " + sa.toString())
                         + ",\"land\":" + sa.isLandAbility() + ",\"spell\":" + sa.isSpell()
                         + ",\"card\":" + card(sa.getHostCard()) + "}");
-            String r = ask("{\"t\":\"priority\"," + view(getGame(), me) + ",\"options\":" + opts + "}");
+            List<SpellAbility> aiPick = null;
+            String ex = "";
+            if (EXPERT) {
+                int ek;
+                try {
+                    aiPick = super.chooseSpellAbilityToPlay();
+                    ek = aiPick == null || aiPick.isEmpty() ? legal.size() : indexOf(legal, aiPick.get(0));
+                } catch (RuntimeException e) { errors++; aiPick = null; ek = -2; }
+                if (ek == -2) unmatched++;
+                ex = ",\"expert\":" + ek;
+            }
+            String r = ask("{\"t\":\"priority\"," + view(getGame(), me) + ",\"options\":" + opts + ex + "}");
+            if (isE(r)) {
+                followed++;
+                return aiPick == null || aiPick.isEmpty() ? null : aiPick;
+            }
             int k;
             try { k = Integer.parseInt(r); } catch (NumberFormatException e) { k = legal.size(); }
             if (k < 0 || k >= legal.size()) return null;
@@ -130,7 +166,16 @@ public class PipeBench {
             List<Card> can = new ArrayList<>();
             for (Card c : attacker.getCreaturesInPlay()) if (CombatUtil.canAttack(c, def)) can.add(c);
             if (can.isEmpty()) return;
-            String r = ask("{\"t\":\"attack\"," + view(getGame(), attacker) + ",\"options\":" + cards(can) + "}");
+            String ex = "";
+            if (EXPERT) {
+                try { super.declareAttackers(attacker, combat); } catch (RuntimeException e) { errors++; }
+                StringJoiner ej = new StringJoiner(",", "[", "]");
+                for (int i = 0; i < can.size(); i++) if (combat.isAttacking(can.get(i))) ej.add(String.valueOf(i));
+                ex = ",\"expert\":" + ej;
+            }
+            String r = ask("{\"t\":\"attack\"," + view(getGame(), attacker) + ",\"options\":" + cards(can) + ex + "}");
+            if (isE(r)) { followed++; return; }
+            if (EXPERT) for (Card c : new ArrayList<>(combat.getAttackers())) combat.removeFromCombat(c);
             for (String tok : r.split("\\s+")) {
                 if (tok.isEmpty()) continue;
                 try {
@@ -151,8 +196,22 @@ public class PipeBench {
             List<Card> attackers = new ArrayList<>(combat.getAttackers());
             List<Card> blockers = new ArrayList<>(defender.getCreaturesInPlay());
             if (attackers.isEmpty() || blockers.isEmpty()) return;
+            String ex = "";
+            if (EXPERT) {
+                try { super.declareBlockers(defender, combat); } catch (RuntimeException e) { errors++; }
+                StringJoiner ej = new StringJoiner(",", "[", "]");
+                for (int b = 0; b < blockers.size(); b++)
+                    for (int a = 0; a < attackers.size(); a++)
+                        if (combat.getBlockers(attackers.get(a)).contains(blockers.get(b))) {
+                            ej.add("[" + b + "," + a + "]");
+                            break;
+                        }
+                ex = ",\"expert\":" + ej;
+            }
             String r = ask("{\"t\":\"block\"," + view(getGame(), defender) + ",\"attackers\":" + cards(attackers)
-                    + ",\"blockers\":" + cards(blockers) + "}");
+                    + ",\"blockers\":" + cards(blockers) + ex + "}");
+            if (isE(r)) { followed++; return; }
+            if (EXPERT) for (Card b : blockers) if (combat.isBlocking(b)) combat.removeFromCombat(b);
             List<Card> added = new ArrayList<>();
             for (String tok : r.split("\\s+")) {
                 String[] p = tok.split(":");
@@ -228,7 +287,8 @@ public class PipeBench {
             proto.flush();
         }
         proto.println(TAG + "{\"t\":\"done\",\"decisions\":" + decisions + ",\"fallbacks\":" + fallbacks
-                + ",\"errors\":" + errors + "}");
+                + ",\"errors\":" + errors + ",\"expert_followed\":" + followed
+                + ",\"expert_unmatched\":" + unmatched + "}");
         proto.flush();
         System.exit(0);
     }
