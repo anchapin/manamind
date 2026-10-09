@@ -1,8 +1,9 @@
 """Self-play round loop: promote-or-keep, Elo ladder, kill switch (#87)."""
 
 import json
+import subprocess
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -17,8 +18,12 @@ from manamind.training.selfplay_loop import (
 class Fakes:
     """Stand-ins for the Node scripts and the trainer."""
 
-    def __init__(self, scores: List[float]) -> None:
+    def __init__(
+        self, scores: List[float], experts: Optional[List[float]] = None
+    ) -> None:
         self.scores = list(scores)
+        self.experts = list(experts or [])
+        self.fail_with_results = False
         self.cmds: List[List[str]] = []
         self.trains: List[List[str]] = []
 
@@ -44,6 +49,24 @@ class Fakes:
                     }
                 )
             )
+        elif "scripts/yardstick-pn.ts" in cmd:
+            games = int(cmd[cmd.index("--games") + 1])
+            score = self.experts.pop(0)
+            win = round(score * games)
+            out.write_text(
+                json.dumps(
+                    {
+                        "games": games,
+                        "win": win,
+                        "loss": games - win,
+                        "draw": 0,
+                        "score": score,
+                        "ci95": [0.0, 1.0],
+                    }
+                )
+            )
+            if self.fail_with_results:
+                raise subprocess.CalledProcessError(1, cmd)
         else:
             out.write_bytes(b"")
 
@@ -143,3 +166,89 @@ def test_buffer_cap_and_gate_settings_reach_the_scripts(
     gate = fakes.cmds[1]
     assert gate[gate.index("--threshold") + 1] == "0.6"
     assert gate[gate.index("--sims") + 1] == "32"
+
+
+def test_anchor_is_off_by_default(tmp_path: Path) -> None:
+    fakes = Fakes([0.75])
+    state = run(args(tmp_path), fakes.runner, fakes.trainer)
+    assert not any("scripts/yardstick-pn.ts" in c for c in fakes.cmds)
+    assert "expert" not in state["history"][0]
+    assert "Expert" not in table(state)
+
+
+def test_anchor_vetoes_a_promotion_that_loses_to_the_expert(
+    tmp_path: Path,
+) -> None:
+    # Gate promotes rounds 1-3 and keeps round 4. Expert: champion 0.30,
+    # round 1 0.34 (new best), round 2 0.30 (within 0.05 of 0.34), round
+    # 3 0.25 (below 0.29, vetoed); round 4 never reaches the anchor.
+    fakes = Fakes([0.75, 0.6, 0.7, 0.4], [0.30, 0.34, 0.30, 0.25])
+    state = run(
+        args(tmp_path, "--rounds", "4", "--anchor-games", "20"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert [h["promote"] for h in state["history"]] == [
+        True,
+        True,
+        False,
+        False,
+    ]
+    assert [h["vetoed"] for h in state["history"]] == [
+        False,
+        False,
+        True,
+        False,
+    ]
+    assert [h["expert"] for h in state["history"]] == [
+        0.34,
+        0.30,
+        0.25,
+        None,
+    ]
+    assert state["champion"] == "rounds/0002"
+    assert state["anchor_best"] == pytest.approx(0.34)
+    assert state["rises"] == 2 and state["flat"] == 2
+    assert state["elo"] == pytest.approx(
+        elo_diff(0.75, 20) + elo_diff(0.6, 20)
+    )
+    anchors = [c for c in fakes.cmds if "scripts/yardstick-pn.ts" in c]
+    # Champion measured once, then one run per gated candidate.
+    models = [c[c.index("--model") + 1] for c in anchors]
+    assert [Path(m).parent.name for m in models] == [
+        "0000",
+        "0001",
+        "0002",
+        "0003",
+    ]
+    # Same deals every time, greedy at the loop's search budget.
+    assert {c[c.index("--seed") + 1] for c in anchors} == {"2000001"}
+    assert all(c[c.index("--games") + 1] == "20" for c in anchors)
+    assert all("--sample" not in c for c in anchors)
+    md = table(state)
+    assert "| Expert |" in md.splitlines()[0] or " Expert |" in md
+    assert "kept champion (Expert regression)" in md
+    assert "| 4 | 40 |" in md and md.splitlines()[5].endswith(" - |")
+    assert "Best champion Expert score 0.340." in md
+
+
+def test_anchor_keeps_results_when_some_games_error(tmp_path: Path) -> None:
+    fakes = Fakes([0.75], [0.30, 0.40])
+    fakes.fail_with_results = True
+    state = run(
+        args(tmp_path, "--anchor-games", "20"), fakes.runner, fakes.trainer
+    )
+    assert state["history"][0]["promote"] is True
+    assert state["anchor_best"] == pytest.approx(0.40)
+
+
+def test_rerun_round_drops_a_stale_candidate_anchor(tmp_path: Path) -> None:
+    stale = tmp_path / "run" / "rounds" / "0001" / "anchor.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps({"games": 20, "score": 0.99}))
+    fakes = Fakes([0.75], [0.30, 0.10])
+    state = run(
+        args(tmp_path, "--anchor-games", "20"), fakes.runner, fakes.trainer
+    )
+    assert state["history"][0]["expert"] == pytest.approx(0.10)
+    assert state["history"][0]["vetoed"] is True

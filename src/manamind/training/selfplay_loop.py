@@ -10,6 +10,15 @@ Each round:
 4. The candidate becomes champion when the gate promotes it. The ladder
    Elo then rises by the gate's Elo difference; otherwise it stays flat.
 
+Expert anchor (``--anchor-games N``, off at 0): head-to-head gains alone can
+overfit to the champion's own lineage (round 9 of ``selfplay_rg`` beat
+bc.pt 0.725 head to head yet lost ground to Forge and the Planar Nexus
+Expert AI, #84). With the anchor on, a candidate the gate would promote also
+plays ``N`` games against the Expert AI (``scripts/yardstick-pn.ts``, the
+same fixed seeds every time, so each comparison sees the same deals). It is
+promoted only if its Expert score is at least the best champion's Expert
+score minus ``--anchor-margin``; otherwise the round counts as flat.
+
 Kill switch: the loop stops for good once the Elo has been flat for
 ``--flat-rounds`` rounds in a row (default 3). State lives in
 ``<run>/loop.json``, so dispatching again resumes where it stopped.
@@ -37,6 +46,7 @@ Runner = Callable[[List[str], Path], None]
 Trainer = Callable[[List[str]], Dict[str, Any]]
 
 GATE_SEED_BASE = 1_000_000
+ANCHOR_SEED = 2_000_001
 
 
 def run_cmd(cmd: List[str], cwd: Path) -> None:
@@ -102,26 +112,82 @@ def bootstrap(run_dir: Path, init: Optional[Path]) -> Path:
     return out
 
 
+def _result(h: Dict[str, Any]) -> str:
+    if h["promote"]:
+        return "promoted"
+    if h.get("vetoed"):
+        return "kept champion (Expert regression)"
+    return "kept champion"
+
+
 def table(state: Dict[str, Any]) -> str:
     """Markdown results table, one row per round."""
-    rows = [
-        "| Round | Games | Gate score | 95% CI | Result | Elo |",
-        "|---:|---:|---:|:---:|:---|---:|",
-    ]
+    anchored = any("expert" in h for h in state["history"])
+    head = "| Round | Games | Gate score | 95% CI | Result | Elo |"
+    rule = "|---:|---:|---:|:---:|:---|---:|"
+    if anchored:
+        head += " Expert |"
+        rule += "---:|"
+    rows = [head, rule]
     for h in state["history"]:
         lo, hi = h["ci95"]
-        result = "promoted" if h["promote"] else "kept champion"
-        rows.append(
+        row = (
             f"| {h['round']} | {h['games_total']:,} | {h['score']:.3f} "
-            f"| [{lo:.3f}, {hi:.3f}] | {result} | {h['elo']:+.0f} |"
+            f"| [{lo:.3f}, {hi:.3f}] | {_result(h)} | {h['elo']:+.0f} |"
         )
+        if anchored:
+            ex = h.get("expert")
+            row += f" {ex:.3f} |" if ex is not None else " - |"
+        rows.append(row)
     tail = (
         f"\nElo rose in {state['rises']} round(s); "
         f"flat streak {state['flat']}."
     )
+    best = state.get("anchor_best")
+    if best is not None:
+        tail += f" Best champion Expert score {best:.3f}."
     if state["stopped"]:
         tail += f" Stopped: {state['stopped']}."
     return "\n".join(rows) + tail + "\n"
+
+
+def expert_score(
+    args: argparse.Namespace, model_dir: Path, runner: Runner
+) -> float:
+    """Expert AI score for ``model_dir``'s ONNX; cached in anchor.json."""
+    out = model_dir / "anchor.json"
+    if not out.exists():
+        cmd = [
+            "npx",
+            "tsx",
+            "scripts/yardstick-pn.ts",
+            "--agent",
+            "model",
+            "--model",
+            str((model_dir / "forge_pointer.onnx").resolve()),
+            "--games",
+            str(args.anchor_games),
+            "--seed",
+            str(ANCHOR_SEED),
+            "--sims",
+            str(args.sims),
+            "--out",
+            str(out.resolve()),
+        ]
+        try:
+            runner(cmd, args.pn_dir)
+        except subprocess.CalledProcessError:
+            # yardstick-pn.ts exits 1 when some games errored but still
+            # writes its results; a missing file is a real failure.
+            if not out.exists():
+                raise
+    result: Dict[str, Any] = json.loads(out.read_text())
+    if int(result["games"]) != args.anchor_games:
+        raise SystemExit(
+            f"{out} has {result['games']} games, not --anchor-games "
+            f"{args.anchor_games}; delete it to re-measure"
+        )
+    return float(result["score"])
 
 
 def run_round(
@@ -137,6 +203,8 @@ def run_round(
     cand = run_dir / "rounds" / f"{r:04d}"
     buffer = run_dir / "buffer"
     buffer.mkdir(parents=True, exist_ok=True)
+    # A round cut short and re-run must not reuse a stale Expert score.
+    (cand / "anchor.json").unlink(missing_ok=True)
     pn: Path = args.pn_dir
     tsx = ["npx", "tsx"]
     runner(
@@ -196,9 +264,23 @@ def run_round(
         pn,
     )
     gate = json.loads(gate_path.read_text())
+    promote = bool(gate["promote"])
+    expert: Optional[float] = None
+    vetoed = False
+    if args.anchor_games > 0 and promote:
+        best = state.get("anchor_best")
+        if best is None:
+            best = expert_score(args, champ, runner)
+            state["anchor_best"] = best
+        expert = expert_score(args, cand, runner)
+        if expert < best - args.anchor_margin:
+            promote = False
+            vetoed = True
+        else:
+            state["anchor_best"] = max(best, expert)
     state["round"] = r
     state["games_total"] += args.games
-    if gate["promote"]:
+    if promote:
         state["champion"] = f"rounds/{r:04d}"
         state["elo"] += elo_diff(gate["score"], gate["games"])
         state["rises"] += 1
@@ -214,11 +296,14 @@ def run_round(
             "draws": gate["draws"],
             "score": gate["score"],
             "ci95": gate["ci95"],
-            "promote": bool(gate["promote"]),
+            "promote": promote,
             "elo": round(state["elo"], 1),
             "champion": state["champion"],
         }
     )
+    if args.anchor_games > 0:
+        state["history"][-1]["expert"] = expert
+        state["history"][-1]["vetoed"] = vetoed
     if state["flat"] >= args.flat_rounds:
         state["stopped"] = f"Elo flat for {state['flat']} rounds"
     return state
@@ -266,6 +351,18 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--buffer-games", type=int, default=BUFFER_GAMES)
     ap.add_argument("--flat-rounds", type=int, default=3)
+    ap.add_argument(
+        "--anchor-games",
+        type=int,
+        default=0,
+        help="Expert AI games to check a promotion (even; 0 = off)",
+    )
+    ap.add_argument(
+        "--anchor-margin",
+        type=float,
+        default=0.05,
+        help="allowed drop below the best champion's Expert score",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--force", action="store_true", help="resume after the kill switch"
@@ -274,7 +371,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    state = run(build_parser().parse_args(argv))
+    args = build_parser().parse_args(argv)
+    if args.anchor_games < 0 or args.anchor_games % 2:
+        raise SystemExit("--anchor-games must be 0 or a positive even number")
+    state = run(args)
     print(table(state))
 
 

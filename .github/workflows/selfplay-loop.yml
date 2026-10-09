@@ -3,8 +3,10 @@
 # Each round: Planar Nexus self-play with the champion -> train_selfplay on
 # the newest 20,000 games -> head-to-head gate -> promote or keep. Stops for
 # good when the Elo has been flat for 3 rounds (re-dispatch with force=true
-# to go on). State, buffer and checkpoints stay in ~/manamind-runs/<run_name>;
-# only the table and gate results are uploaded.
+# to go on). With --anchor-games N a promotion must also hold up against the
+# Planar Nexus Expert AI (N games, fixed seeds; see selfplay_loop.py).
+# State, buffer and checkpoints stay in ~/manamind-runs/<run_name>; only
+# the table and gate/anchor results are uploaded.
 name: Self-play loop on home PC
 
 on:
@@ -33,7 +35,7 @@ on:
       args:
         description: "Extra args for manamind.training.selfplay_loop"
         required: true
-        default: "--games 500 --sims 16 --gate-games 40 --epochs 2"
+        default: "--games 500 --sims 16 --gate-games 40 --epochs 2 --anchor-games 100"
       issue:
         description: "Issue to post the table to (blank to skip)"
         required: false
@@ -133,6 +135,9 @@ jobs:
           cp "$RUN_DIR/loop.md" "results/selfplay_${RUN_NAME}_loop.md" || true
           for g in "$RUN_DIR"/rounds/*/gate.json; do
             [ -f "$g" ] && cp "$g" "results/selfplay_${RUN_NAME}_gate_$(basename "$(dirname "$g")").json"
+          done
+          for a in "$RUN_DIR"/rounds/*/anchor.json; do
+            [ -f "$a" ] && cp "$a" "results/selfplay_${RUN_NAME}_anchor_$(basename "$(dirname "$a")").json"
           done
           true
 
