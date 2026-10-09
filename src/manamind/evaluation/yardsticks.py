@@ -10,12 +10,25 @@ interval, and where that interval sits against the 18% imitation baseline.
 ``--summary`` re-renders an existing ``eval_summary.json`` without playing,
 which the wrapper and the tests use.
 
+``elo`` ranks checkpoints against each other in Planar Nexus: every pair
+plays ``--games`` games through ``scripts/gate-forge.ts`` (seats alternate
+every game, decks swap every two), and a Bradley-Terry fit (draws count
+half, one virtual draw per pair so a clean sweep stays finite) turns the
+results into Elo, anchored at the first checkpoint = 0. A checkpoint is an
+ONNX file, a directory holding ``forge_pointer.onnx``, or a ``.pt`` that is
+exported to ONNX first. Results go to ``<out>/elo.json`` and ``elo.md``.
+
 Example::
 
     PYTHONPATH=src python -m manamind.evaluation.yardsticks forge \\
         --forge-dir ~/forge-2.0.15 --java ~/forge-jdk17/bin/java \\
         --runs-dir ~/manamind-runs --ckpts forge_bc/bc.pt,forge_rl/last.pt \\
         --games 200 --out results/yardstick_forge
+
+    PYTHONPATH=src python -m manamind.evaluation.yardsticks elo \\
+        --pn-dir ../planar-nexus --runs-dir ~/manamind-runs \\
+        --ckpts forge_bc/bc.pt,selfplay_rg/rounds/0003 --games 40 \\
+        --out results/yardstick_elo
 """
 
 from __future__ import annotations
@@ -23,8 +36,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import subprocess
+from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 FORGE_BASELINE = 0.18
 BRIDGE = Path(__file__).resolve().parents[3] / "tools" / "forge-bridge"
@@ -174,6 +189,147 @@ def run_forge(args: argparse.Namespace) -> str:
     return write_forge(summary, args.out, args.baseline)
 
 
+Runner = Callable[[List[str], Path], None]
+
+
+def run_cmd(cmd: List[str], cwd: Path) -> None:
+    """Run one Planar Nexus script; raise if it fails."""
+    subprocess.run(cmd, cwd=cwd, check=True)
+
+
+def fit_elo(
+    n_players: int,
+    pairs: Sequence[Tuple[int, int, int, float]],
+    prior: float = 0.5,
+    iters: int = 5000,
+) -> List[float]:
+    """Bradley-Terry Elo from ``(i, j, games, score_of_j)`` results.
+
+    Draws count half (they are already in the score). ``prior`` adds that
+    many virtual wins to each side of every pair, so a sweep stays finite.
+    Player 0 is anchored at 0 Elo.
+    """
+    wins = [0.0] * n_players
+    games: Dict[Tuple[int, int], float] = {}
+    for i, j, n, score in pairs:
+        wins[j] += score * n + prior
+        wins[i] += (1.0 - score) * n + prior
+        key = (min(i, j), max(i, j))
+        games[key] = games.get(key, 0.0) + n + 2 * prior
+    gamma = [1.0] * n_players
+    for _ in range(iters):
+        new = []
+        for k in range(n_players):
+            denom = sum(
+                n / (gamma[a] + gamma[b])
+                for (a, b), n in games.items()
+                if k in (a, b)
+            )
+            new.append(wins[k] / denom if denom else gamma[k])
+        new = [g / new[0] for g in new]
+        done = max(abs(a - b) for a, b in zip(new, gamma)) < 1e-10
+        gamma = new
+        if done:
+            break
+    return [400.0 * math.log10(g) for g in gamma]
+
+
+def onnx_for(ckpt: Path, scratch: Path, index: int) -> Path:
+    """ONNX path for a checkpoint, exporting a ``.pt`` when needed."""
+    if ckpt.is_dir():
+        return ckpt / "forge_pointer.onnx"
+    if ckpt.suffix == ".onnx":
+        return ckpt
+    from manamind.models.forge_pointer import load_pointer_net
+    from manamind.models.forge_pointer_onnx import export
+
+    net, _ = load_pointer_net(str(ckpt))
+    return export(net, scratch / f"{index:02d}")
+
+
+def elo_table(rows: Sequence[Dict[str, Any]]) -> str:
+    lines = [
+        "| Checkpoint | Elo | Games | Score |",
+        "|---|---:|---:|---:|",
+    ]
+    for r in sorted(rows, key=lambda r: -float(r["elo"])):
+        lines.append(
+            f"| `{r['ckpt']}` | {r['elo']:+.0f} | {r['games']} "
+            f"| {r['score']:.3f} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def run_elo(args: argparse.Namespace, runner: Runner = run_cmd) -> str:
+    names = [c for c in (args.ckpts or "").split(",") if c]
+    if len(names) < 2:
+        raise SystemExit("--ckpts needs at least two checkpoints")
+    paths = resolve_ckpts(names, args.runs_dir)
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        raise SystemExit(f"missing checkpoints: {', '.join(missing)}")
+    out: Path = args.out
+    out.mkdir(parents=True, exist_ok=True)
+    models = [
+        onnx_for(p, out / "onnx", k).resolve() for k, p in enumerate(paths)
+    ]
+    pairs: List[Tuple[int, int, int, float]] = []
+    results: List[Dict[str, Any]] = []
+    for n, (i, j) in enumerate(combinations(range(len(paths)), 2)):
+        pair_out = (out / "pairs" / f"{i:02d}_{j:02d}.json").resolve()
+        pair_out.parent.mkdir(parents=True, exist_ok=True)
+        runner(
+            [
+                "npx",
+                "tsx",
+                "scripts/gate-forge.ts",
+                "--candidate",
+                str(models[j]),
+                "--baseline",
+                str(models[i]),
+                "--games",
+                str(args.games),
+                "--seed",
+                str(args.seed + n * args.games + 1),
+                "--sims",
+                str(args.sims),
+                "--threshold",
+                "0.5",
+                "--out",
+                str(pair_out),
+            ],
+            args.pn_dir,
+        )
+        g = json.loads(pair_out.read_text())
+        pairs.append((i, j, int(g["games"]), float(g["score"])))
+        results.append(
+            {"a": names[i], "b": names[j], **{k: g[k] for k in RESULT_KEYS}}
+        )
+    elo = fit_elo(len(paths), pairs)
+    rows = []
+    for k, name in enumerate(names):
+        played = [p for p in pairs if k in (p[0], p[1])]
+        n_k = sum(p[2] for p in played)
+        pts = sum(p[2] * (p[3] if p[1] == k else 1 - p[3]) for p in played)
+        rows.append(
+            {
+                "ckpt": name,
+                "elo": round(elo[k], 1),
+                "games": n_k,
+                "score": round(pts / n_k, 4) if n_k else 0.0,
+            }
+        )
+    (out / "elo.json").write_text(
+        json.dumps({"rows": rows, "pairs": results}, indent=2) + "\n"
+    )
+    table = elo_table(rows)
+    (out / "elo.md").write_text(table)
+    return table
+
+
+RESULT_KEYS = ("games", "wins", "losses", "draws", "score", "ci95")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="leg", required=True)
@@ -195,6 +351,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="render an existing eval_summary.json instead of playing",
     )
     f.add_argument("--out", type=Path, required=True)
+    e = sub.add_parser("elo", help="Elo ladder between checkpoints (PN)")
+    e.add_argument("--pn-dir", type=Path, required=True)
+    e.add_argument("--ckpts", help="comma list: .onnx, .pt or run dirs")
+    e.add_argument("--runs-dir", type=Path, default=Path("."))
+    e.add_argument("--games", type=int, default=40, help="games per pair")
+    e.add_argument("--sims", type=int, default=16)
+    e.add_argument("--seed", type=int, default=0)
+    e.add_argument("--out", type=Path, required=True)
     return ap
 
 
@@ -202,6 +366,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     args = build_parser().parse_args(argv)
     if args.leg == "forge":
         print(run_forge(args), end="")
+    elif args.leg == "elo":
+        print(run_elo(args), end="")
 
 
 if __name__ == "__main__":
