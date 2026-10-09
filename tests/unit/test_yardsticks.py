@@ -5,10 +5,13 @@ from pathlib import Path
 import pytest
 
 from manamind.evaluation.yardsticks import (
+    build_parser,
+    fit_elo,
     forge_rows,
     forge_table,
     main,
     resolve_ckpts,
+    run_elo,
     versus_baseline,
     wilson_interval,
 )
@@ -105,3 +108,71 @@ def test_cli_renders_existing_summary(
 def test_cli_needs_forge_and_ckpts_to_play(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["forge", "--out", str(tmp_path)])
+
+
+def test_fit_elo_matches_pairwise_scores() -> None:
+    assert fit_elo(2, [(0, 1, 40, 0.5)]) == pytest.approx([0.0, 0.0])
+    # 75% over many games is about +191 Elo; the virtual draw barely moves it.
+    elo = fit_elo(2, [(0, 1, 4000, 0.75)])
+    assert elo[0] == 0.0 and elo[1] == pytest.approx(190.85, abs=0.5)
+    # A clean sweep stays finite.
+    assert math.isfinite(fit_elo(2, [(0, 1, 10, 1.0)])[1])
+    # Transitive ladder: 2 > 1 > 0.
+    elo3 = fit_elo(3, [(0, 1, 40, 0.7), (1, 2, 40, 0.7), (0, 2, 40, 0.85)])
+    assert elo3[0] == 0.0 < elo3[1] < elo3[2]
+
+
+def test_elo_leg_plays_every_pair(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    for name in ("a", "b", "c"):
+        (runs / name).mkdir(parents=True)
+        (runs / name / "forge_pointer.onnx").write_bytes(b"")
+    strength = {"a": 0, "b": 1, "c": 2}
+    calls = []
+
+    def runner(cmd: list, cwd: Path) -> None:
+        calls.append((cmd, cwd))
+        cand = Path(cmd[cmd.index("--candidate") + 1]).parent.name
+        base = Path(cmd[cmd.index("--baseline") + 1]).parent.name
+        score = 0.5 + 0.2 * (strength[cand] - strength[base])
+        games = int(cmd[cmd.index("--games") + 1])
+        Path(cmd[cmd.index("--out") + 1]).write_text(
+            json.dumps(
+                {
+                    "games": games,
+                    "wins": round(score * games),
+                    "losses": games - round(score * games),
+                    "draws": 0,
+                    "score": score,
+                    "ci95": [0.0, 1.0],
+                }
+            )
+        )
+
+    args = build_parser().parse_args(
+        ["elo", "--pn-dir", str(tmp_path), "--runs-dir", str(runs)]
+        + ["--ckpts", "a,b,c", "--games", "20", "--out", str(tmp_path / "o")]
+    )
+    table = run_elo(args, runner)
+    assert len(calls) == 3 and all(cwd == tmp_path for _, cwd in calls)
+    assert [c[c.index("--seed") + 1] for c, _ in calls] == ["1", "21", "41"]
+    assert all(c[c.index("--threshold") + 1] == "0.5" for c, _ in calls)
+    rows = json.loads((tmp_path / "o" / "elo.json").read_text())["rows"]
+    elo = {r["ckpt"]: r["elo"] for r in rows}
+    assert elo["a"] == 0.0 < elo["b"] < elo["c"]
+    assert all(r["games"] == 40 for r in rows)
+    assert table.splitlines()[2].startswith("| `c` |")
+
+
+def test_elo_leg_needs_two_existing_ckpts(tmp_path: Path) -> None:
+    base = ["elo", "--pn-dir", str(tmp_path), "--out", str(tmp_path / "o")]
+    with pytest.raises(SystemExit, match="at least two"):
+        run_elo(build_parser().parse_args(base + ["--ckpts", "x.onnx"]))
+    with pytest.raises(SystemExit, match="missing checkpoints"):
+        run_elo(
+            build_parser().parse_args(
+                base + ["--runs-dir", str(tmp_path), "--ckpts", "x,y"]
+            )
+        )
+    with pytest.raises(ValueError, match="leaves --runs-dir"):
+        run_elo(build_parser().parse_args(base + ["--ckpts", "../x,y"]))
