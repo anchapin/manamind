@@ -1,0 +1,157 @@
+# Self-play round loop for ForgePointerNet (#87) on Alex's home PC
+# (self-hosted runner labelled "manamind-train"). Manual dispatch only.
+# Each round: Planar Nexus self-play with the champion -> train_selfplay on
+# the newest 20,000 games -> head-to-head gate -> promote or keep. Stops for
+# good when the Elo has been flat for 3 rounds (re-dispatch with force=true
+# to go on). State, buffer and checkpoints stay in ~/manamind-runs/<run_name>;
+# only the table and gate results are uploaded.
+name: Self-play loop on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "manamind branch or commit"
+        required: true
+        default: "main"
+      pn_ref:
+        description: "planar-nexus branch or commit"
+        required: true
+        default: "main"
+      run_name:
+        description: "Run name (state under ~/manamind-runs/<run_name>)"
+        required: true
+        default: "selfplay_rg"
+      init:
+        description: "Round-0 checkpoint under ~/manamind-runs for a new run (blank = fresh net)"
+        required: false
+        default: "forge_bc/bc.pt"
+      rounds:
+        description: "Rounds this dispatch"
+        required: true
+        default: "5"
+      args:
+        description: "Extra args for manamind.training.selfplay_loop"
+        required: true
+        default: "--games 500 --sims 16 --gate-games 40 --epochs 2"
+      issue:
+        description: "Issue to post the table to (blank to skip)"
+        required: false
+        default: "87"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-${{ github.event.inputs.run_name }}
+  cancel-in-progress: false
+
+jobs:
+  loop:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 1440
+    env:
+      RUN_NAME: ${{ github.event.inputs.run_name }}
+      INIT: ${{ github.event.inputs.init }}
+      ROUNDS: ${{ github.event.inputs.rounds }}
+      LOOP_ARGS: ${{ github.event.inputs.args }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      REF: ${{ github.event.inputs.ref }}
+      PN_REF: ${{ github.event.inputs.pn_ref }}
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ github.event.inputs.pn_ref }}
+          path: pn
+
+      - name: Validate inputs
+        run: |
+          [[ "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run_name"; exit 1; }
+          [[ -z "$INIT" || "$INIT" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "bad init"; exit 1; }
+          [[ "$INIT" != *..* ]] || { echo "init must stay under ~/manamind-runs"; exit 1; }
+          [[ "$ROUNDS" =~ ^[0-9]+$ && "$ROUNDS" -gt 0 ]] || { echo "bad rounds"; exit 1; }
+          [[ "$LOOP_ARGS" =~ ^[A-Za-z0-9.,=_\ -]+$ ]] || { echo "bad args"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e . onnx onnxruntime
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Run rounds (resumes from loop.json)
+        shell: bash
+        run: |
+          set -o pipefail
+          RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
+          mkdir -p "$RUN_DIR" results
+          INIT_ARG=()
+          if [ ! -f "$RUN_DIR/loop.json" ] && [ -n "$INIT" ]; then
+            [ -f "$HOME/manamind-runs/$INIT" ] || { echo "no $INIT"; exit 1; }
+            INIT_ARG=(--init "$HOME/manamind-runs/$INIT")
+          fi
+          read -r -a EXTRA <<< "$LOOP_ARGS"
+          PYTHONPATH=src python -m manamind.training.selfplay_loop \
+            --run-dir "$RUN_DIR" --pn-dir pn --rounds "$ROUNDS" \
+            "${INIT_ARG[@]}" "${EXTRA[@]}" 2>&1 \
+            | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000 > "results/selfplay_${RUN_NAME}_run.log"
+          tail -20 "results/selfplay_${RUN_NAME}_run.log"
+
+      - name: Collect results
+        if: always()
+        run: |
+          RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
+          cp "$RUN_DIR/loop.json" "results/selfplay_${RUN_NAME}_loop.json" || true
+          cp "$RUN_DIR/loop.md" "results/selfplay_${RUN_NAME}_loop.md" || true
+          for g in "$RUN_DIR"/rounds/*/gate.json; do
+            [ -f "$g" ] && cp "$g" "results/selfplay_${RUN_NAME}_gate_$(basename "$(dirname "$g")").json"
+          done
+          true
+
+      - name: Post table
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MD="results/selfplay_${RUN_NAME}_loop.md"
+          [ -f "$MD" ] || exit 0
+          {
+            echo "**Self-play loop \`${RUN_NAME}\`**"
+            echo
+            cat "$MD"
+            echo
+            echo "_[Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}), manamind \`${REF}\`, planar-nexus \`${PN_REF}\`._"
+          } > results/comment.md
+          cat results/comment.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file results/comment.md
+          fi
+
+      - name: Upload results (no checkpoints or games)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfplay-results-${{ github.event.inputs.run_name }}
+          path: results/
