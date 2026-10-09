@@ -35,12 +35,12 @@ Example::
 
     PYTHONPATH=src python -m manamind.evaluation.yardsticks forge \\
         --forge-dir ~/forge-2.0.15 --java ~/forge-jdk17/bin/java \\
-        --runs-dir ~/manamind-runs --ckpts forge_bc/bc.pt,forge_rl/last.pt \\
+        --runs-dir ~/manamind-runs --ckpts forge_bc_seed0/bc.pt,forge_bc_seed0/last.pt \\
         --games 200 --out results/yardstick_forge
 
     PYTHONPATH=src python -m manamind.evaluation.yardsticks elo \\
         --pn-dir ../planar-nexus --runs-dir ~/manamind-runs \\
-        --ckpts forge_bc/bc.pt,selfplay_rg/rounds/0003 --games 40 \\
+        --ckpts forge_bc_seed0/bc.pt,selfplay_rg/rounds/0003 --games 40 \\
         --out results/yardstick_elo
 """
 

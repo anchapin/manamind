@@ -25,7 +25,7 @@ on:
       init:
         description: "Round-0 checkpoint under ~/manamind-runs for a new run (blank = fresh net)"
         required: false
-        default: "forge_bc/bc.pt"
+        default: "forge_bc_seed0/bc.pt"
       rounds:
         description: "Rounds this dispatch"
         required: true

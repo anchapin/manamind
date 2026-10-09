@@ -12,7 +12,7 @@ on:
         required: true
         default: "main"
       ckpts:
-        description: "Comma list of checkpoints under ~/manamind-runs (e.g. forge_bc/bc.pt,forge_rl/last.pt)"
+        description: "Comma list of checkpoints under ~/manamind-runs (e.g. forge_bc_seed0/bc.pt,forge_bc_seed0/last.pt)"
         required: true
       games:
         description: "Games per checkpoint and mode (even keeps seats/decks balanced)"
