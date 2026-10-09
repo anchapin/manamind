@@ -382,6 +382,101 @@ class ForgePointerNet(nn.Module):
             return ImitateOutput(logp, value, True, True, agree)
         raise ValueError(f"unknown decision type {t!r}")
 
+    # -- search distillation (#87) ------------------------------------------
+    def distill(self, d: Decision) -> "DistillOutput":
+        """Soft cross-entropy of this policy against search target ``d["pi"]``.
+
+        ``pi`` comes from Planar Nexus self-play (``selfplay-forge.ts``),
+        folded onto the head for the decision: priority, options then pass;
+        attack, one attack probability per creature; block, one row per
+        blocker over the attackers then no block. ``used`` is False when the
+        target is missing or doesn't match the decision's shape.
+        """
+        state = self.encode_state(d)
+        value = self.value(state)
+        t = d.get("t")
+        pi = d.get("pi")
+        none = DistillOutput(_zero(state), value, False)
+        if pi is None:
+            return none
+        if t == "priority":
+            options = d.get("options", [])
+            if len(pi) != len(options) + 1:
+                return none
+            tgt = _normalised(state.new_tensor(pi))
+            logp = F.log_softmax(self.priority_logits(state, options), -1)
+            return DistillOutput(-(tgt * logp).sum(), value, True)
+        if t == "attack":
+            creatures = d.get("options", [])
+            if not creatures or len(pi) != len(creatures):
+                return none
+            tgt = state.new_tensor(pi).clamp(0.0, 1.0)
+            loss = F.binary_cross_entropy_with_logits(
+                self.attack_logits(state, creatures), tgt, reduction="sum"
+            )
+            return DistillOutput(loss, value, True)
+        if t == "block":
+            blockers = d.get("blockers", [])
+            attackers = d.get("attackers", [])
+            if not blockers or not attackers or len(pi) != len(blockers):
+                return none
+            if any(len(row) != len(attackers) + 1 for row in pi):
+                return none
+            tgt = _normalised(state.new_tensor(pi))
+            logp = F.log_softmax(
+                self.block_logits(state, blockers, attackers), -1
+            )
+            return DistillOutput(-(tgt * logp).sum(), value, True)
+        return none
+
+
+def _normalised(t: torch.Tensor) -> torch.Tensor:
+    """Rows of ``t`` clamped to >= 0 and scaled to sum to 1."""
+    t = t.clamp(min=0.0)
+    return t / t.sum(-1, keepdim=True).clamp(min=1e-8)
+
+
+@dataclass
+class DistillOutput:
+    """Search-target cross-entropy for one decision plus its value."""
+
+    policy: torch.Tensor
+    value: torch.Tensor
+    used: bool
+
+
+def distill_loss(
+    steps: Sequence[DistillOutput],
+    returns: Sequence[float],
+    value_coef: float = 1.0,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """AlphaZero-style loss on self-play records (#87).
+
+    Policy term: mean soft cross-entropy against the search's improved
+    policy over decisions with a usable target. Value term: MSE against the
+    game result from the deciding seat.
+    """
+    if not steps:
+        raise ValueError("no steps to learn from")
+    if len(returns) != len(steps):
+        raise ValueError("need one return per step")
+    val = torch.stack([s.value for s in steps])
+    ret = val.new_tensor(list(returns))
+    value = F.mse_loss(val, ret)
+    used = [s for s in steps if s.used]
+    if used:
+        policy = torch.stack([s.policy for s in used]).mean()
+    else:
+        policy = value.new_zeros(())
+    loss = policy + value_coef * value
+    stats = {
+        "loss": float(loss.detach()),
+        "policy": float(policy.detach()),
+        "value": float(value.detach()),
+        "used_frac": len(used) / len(steps),
+    }
+    return loss, stats
+
 
 @dataclass
 class ImitateOutput:
