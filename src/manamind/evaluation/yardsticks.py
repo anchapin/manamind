@@ -25,6 +25,12 @@ search's greedy pick and a draw from its policy. Results go to
 ``<out>/pn.json`` and ``pn.md``: score (a draw counts half), Wilson 95%
 interval, and the score with each deck.
 
+``all`` runs the three legs for the same checkpoints and writes one report,
+``<out>/all.md`` and ``all.json``. The Forge leg takes only ``.pt``
+checkpoints and is skipped without ``--forge-dir``; the Elo leg needs at
+least two checkpoints. A leg that fails is reported in place and the other
+legs still run; the command then exits non-zero.
+
 Example::
 
     PYTHONPATH=src python -m manamind.evaluation.yardsticks forge \\
@@ -428,6 +434,107 @@ def run_pn(args: argparse.Namespace, runner: Runner = run_cmd) -> str:
     return table
 
 
+LegFn = Callable[[argparse.Namespace], str]
+
+
+def _leg_json(path: Path) -> Any:
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def run_all(
+    args: argparse.Namespace,
+    runner: Runner = run_cmd,
+    forge: Optional[LegFn] = None,
+) -> str:
+    names = [c for c in (args.ckpts or "").split(",") if c]
+    if not names:
+        raise SystemExit("--ckpts is needed")
+    legs = [x for x in args.legs.split(",") if x]
+    if not legs or any(x not in ("forge", "pn", "elo") for x in legs):
+        raise SystemExit("--legs takes forge, pn and/or elo")
+    paths = resolve_ckpts(names, args.runs_dir)
+    out: Path = args.out
+    out.mkdir(parents=True, exist_ok=True)
+    forge_fn = forge or run_forge
+    common = {"runs_dir": args.runs_dir, "seed": args.seed, "out": out}
+    sections: List[Tuple[str, str]] = []
+    report: Dict[str, Any] = {"ckpts": names}
+    failed = False
+
+    def run_leg(key: str, title: str, fn: Callable[[], str]) -> None:
+        nonlocal failed
+        try:
+            body = fn()
+            report[key] = _leg_json(out / f"{key}.json")
+        except (Exception, SystemExit) as exc:  # keep the other legs going
+            failed = True
+            body = f"_Failed: {exc}_\n"
+            report[key] = {"failed": str(exc)}
+        sections.append((title, body))
+
+    def skip(key: str, title: str, why: str) -> None:
+        sections.append((title, f"_Skipped: {why}._\n"))
+        report[key] = {"skipped": why}
+
+    if "forge" in legs:
+        title = f"vs Forge AI (baseline {_pct(args.baseline)})"
+        pts = [n for n, p in zip(names, paths) if p.suffix == ".pt"]
+        if not args.forge_dir:
+            skip("forge", title, "no --forge-dir")
+        elif not pts:
+            skip("forge", title, "needs .pt checkpoints")
+        else:
+            ns = argparse.Namespace(
+                forge_dir=args.forge_dir,
+                java=args.java,
+                bridge_out=args.bridge_out,
+                deck_a=args.deck_a,
+                deck_b=args.deck_b,
+                ckpts=",".join(pts),
+                games=args.forge_games,
+                modes=args.modes,
+                baseline=args.baseline,
+                summary=None,
+                **common,
+            )
+            run_leg("forge", title, lambda: forge_fn(ns))
+    if "pn" in legs:
+        ns_pn = argparse.Namespace(
+            pn_dir=args.pn_dir,
+            ckpts=args.ckpts,
+            games=args.pn_games,
+            modes=args.modes,
+            sims=args.sims,
+            **common,
+        )
+        run_leg(
+            "pn",
+            "vs Planar Nexus Expert AI",
+            lambda: run_pn(ns_pn, runner),
+        )
+    if "elo" in legs:
+        if len(names) < 2:
+            skip("elo", "Elo ladder", "needs at least two checkpoints")
+        else:
+            ns_elo = argparse.Namespace(
+                pn_dir=args.pn_dir,
+                ckpts=args.ckpts,
+                games=args.elo_games,
+                sims=args.sims,
+                **common,
+            )
+            run_leg("elo", "Elo ladder", lambda: run_elo(ns_elo, runner))
+    md = "**Yardsticks** for " + ", ".join(f"`{n}`" for n in names) + "\n"
+    for title, body in sections:
+        md += f"\n### {title}\n\n{body}"
+    (out / "all.md").write_text(md)
+    (out / "all.json").write_text(json.dumps(report, indent=2) + "\n")
+    if failed:
+        print(md, end="")
+        raise SystemExit("a yardstick leg failed; see all.md")
+    return md
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="leg", required=True)
@@ -466,6 +573,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sims", type=int, default=16)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--out", type=Path, required=True)
+    a = sub.add_parser("all", help="all three legs, one table")
+    a.add_argument("--pn-dir", type=Path, required=True)
+    a.add_argument("--ckpts", help="comma list: .onnx, .pt or run dirs")
+    a.add_argument("--runs-dir", type=Path, default=Path("."))
+    a.add_argument("--legs", default="forge,pn,elo")
+    a.add_argument("--forge-dir", type=Path)
+    a.add_argument("--java", default="java")
+    a.add_argument("--bridge-out", type=Path, default=BRIDGE / "out")
+    a.add_argument("--deck-a", type=Path, default=BRIDGE / "decks" / "rg.dck")
+    a.add_argument("--deck-b", type=Path, default=BRIDGE / "decks" / "ub.dck")
+    a.add_argument("--forge-games", type=int, default=200)
+    a.add_argument("--pn-games", type=int, default=200)
+    a.add_argument("--elo-games", type=int, default=40, help="per pair")
+    a.add_argument("--modes", default="greedy,sample")
+    a.add_argument("--sims", type=int, default=16)
+    a.add_argument("--seed", type=int, default=1)
+    a.add_argument("--baseline", type=float, default=FORGE_BASELINE)
+    a.add_argument("--out", type=Path, required=True)
     return ap
 
 
@@ -477,6 +602,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         print(run_elo(args), end="")
     elif args.leg == "pn":
         print(run_pn(args), end="")
+    elif args.leg == "all":
+        print(run_all(args), end="")
 
 
 if __name__ == "__main__":

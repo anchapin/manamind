@@ -1,0 +1,200 @@
+# All three #85 yardsticks for the same checkpoints on Alex's home PC
+# (self-hosted, label "manamind-train"): vs stock Forge AI, vs the Planar
+# Nexus Expert AI, and an Elo ladder between the checkpoints. Manual
+# dispatch only. Posts one combined table to an issue (default #85) and the
+# job summary; uploads results without checkpoints.
+name: Yardsticks (all three)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "manamind branch or commit"
+        required: true
+        default: "main"
+      pn_ref:
+        description: "planar-nexus branch or commit"
+        required: true
+        default: "main"
+      ckpts:
+        description: "Comma list under ~/manamind-runs: .pt, .onnx or self-play round dirs (Forge leg uses the .pt ones)"
+        required: true
+      legs:
+        description: "Legs to run"
+        required: true
+        default: "forge,pn,elo"
+      modes:
+        description: "Modes for the Forge and Expert legs"
+        required: true
+        default: "greedy,sample"
+      forge_games:
+        description: "Forge games per checkpoint and mode"
+        required: true
+        default: "200"
+      pn_games:
+        description: "Expert AI games per checkpoint and mode (even)"
+        required: true
+        default: "200"
+      elo_games:
+        description: "Elo games per checkpoint pair"
+        required: true
+        default: "40"
+      issue:
+        description: "Issue to post the table to (blank to skip)"
+        required: false
+        default: "85"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-yardsticks
+  cancel-in-progress: false
+
+jobs:
+  yardsticks:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 1440
+    env:
+      CKPTS: ${{ github.event.inputs.ckpts }}
+      LEGS: ${{ github.event.inputs.legs }}
+      MODES: ${{ github.event.inputs.modes }}
+      FORGE_GAMES: ${{ github.event.inputs.forge_games }}
+      PN_GAMES: ${{ github.event.inputs.pn_games }}
+      ELO_GAMES: ${{ github.event.inputs.elo_games }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      REF: ${{ github.event.inputs.ref }}
+      PN_REF: ${{ github.event.inputs.pn_ref }}
+      FORGE_VERSION: "2.0.15"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ github.event.inputs.pn_ref }}
+          path: pn
+
+      - name: Validate inputs
+        run: |
+          [[ "$CKPTS" =~ ^[A-Za-z0-9._/,-]+$ ]] || { echo "bad ckpts"; exit 1; }
+          [[ "$CKPTS" != *..* ]] || { echo "ckpts must stay under ~/manamind-runs"; exit 1; }
+          [[ "$LEGS" =~ ^(forge|pn|elo)(,(forge|pn|elo)){0,2}$ ]] || { echo "bad legs"; exit 1; }
+          [[ "$MODES" =~ ^(greedy|sample)(,(greedy|sample))?$ ]] || { echo "bad modes"; exit 1; }
+          for v in "$FORGE_GAMES" "$PN_GAMES" "$ELO_GAMES"; do
+            [[ "$v" =~ ^[0-9]+$ && "$v" -gt 0 ]] || { echo "bad game count"; exit 1; }
+          done
+          (( PN_GAMES % 2 == 0 )) || { echo "pn_games must be even"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e . onnx onnxruntime
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Forge + JDK 17 (cached in $HOME)
+        if: contains(github.event.inputs.legs, 'forge')
+        shell: bash
+        run: |
+          set -euo pipefail
+          FORGE_DIR="$HOME/forge-$FORGE_VERSION"
+          if ! ls "$FORGE_DIR"/forge-gui-desktop-*-jar-with-dependencies.jar >/dev/null 2>&1; then
+            mkdir -p "$FORGE_DIR"
+            curl -fsSL -o /tmp/forge.tar.bz2 \
+              "https://github.com/Card-Forge/forge/releases/download/forge-$FORGE_VERSION/forge-installer-$FORGE_VERSION.tar.bz2"
+            python3 -c "import tarfile,sys; tarfile.open('/tmp/forge.tar.bz2').extractall(sys.argv[1])" "$FORGE_DIR"
+            rm -f /tmp/forge.tar.bz2
+            JAR="$(find "$FORGE_DIR" -name 'forge-gui-desktop-*-jar-with-dependencies.jar' | head -1)"
+            SUB="$(dirname "$JAR")"
+            if [ "$SUB" != "$FORGE_DIR" ]; then
+              shopt -s dotglob; mv "$SUB"/* "$FORGE_DIR"/
+            fi
+          fi
+          mkdir -p "$FORGE_DIR/home/.forge"
+          JAVA_BIN=""
+          if command -v java >/dev/null; then
+            V="$(java -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.specification.version/{print $2}')"
+            [ "${V%%.*}" -ge 17 ] 2>/dev/null && JAVA_BIN="$(dirname "$(readlink -f "$(command -v java)")")"
+          fi
+          if [ -z "$JAVA_BIN" ]; then
+            JDK="$HOME/forge-jdk17"
+            if [ ! -x "$JDK/bin/java" ]; then
+              mkdir -p "$JDK"
+              curl -fsSL -o /tmp/jdk.tgz \
+                "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
+              tar -xzf /tmp/jdk.tgz -C "$JDK" --strip-components=1
+              rm -f /tmp/jdk.tgz
+            fi
+            JAVA_BIN="$JDK/bin"
+          fi
+          "$JAVA_BIN/java" -version
+          echo "FORGE_DIR=$FORGE_DIR" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$(dirname "$JAVA_BIN")" >> "$GITHUB_ENV"
+
+      - name: Build bridge
+        if: contains(github.event.inputs.legs, 'forge')
+        run: tools/forge-bridge/build.sh
+
+      - name: Run yardsticks
+        shell: bash
+        run: |
+          set -o pipefail
+          OUT="results/yardsticks_${GITHUB_RUN_ID}"
+          mkdir -p "$OUT"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          FORGE_ARGS=()
+          if [ -n "${FORGE_DIR:-}" ]; then
+            FORGE_ARGS=(--forge-dir "$FORGE_DIR" --java "$JAVA_HOME/bin/java")
+          fi
+          PYTHONPATH=src python -m manamind.evaluation.yardsticks all \
+            --pn-dir pn --runs-dir "$HOME/manamind-runs" --ckpts "$CKPTS" \
+            --legs "$LEGS" --modes "$MODES" --forge-games "$FORGE_GAMES" \
+            --pn-games "$PN_GAMES" --elo-games "$ELO_GAMES" \
+            "${FORGE_ARGS[@]}" --out "$OUT" 2>&1 \
+            | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000 > "$OUT/run.log"
+          cat "$OUT/all.md"
+
+      - name: Post table
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "${OUT:-}" ] && [ -f "$OUT/all.md" ] || exit 0
+          {
+            cat "$OUT/all.md"
+            echo
+            echo "_Forge ${FORGE_GAMES}, Expert ${PN_GAMES} games per checkpoint and mode; Elo ${ELO_GAMES} per pair. [Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}), manamind \`${REF}\`, planar-nexus \`${PN_REF}\`._"
+          } > "$OUT/comment.md"
+          cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$OUT/comment.md"
+          fi
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yardsticks-${{ github.run_id }}
+          path: |
+            results/yardsticks_*
+            !results/yardsticks_*/onnx

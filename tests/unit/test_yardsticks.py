@@ -1,7 +1,9 @@
+import argparse
 import json
 import math
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -12,10 +14,12 @@ from manamind.evaluation.yardsticks import (
     forge_table,
     main,
     resolve_ckpts,
+    run_all,
     run_elo,
     run_pn,
     versus_baseline,
     wilson_interval,
+    write_forge,
 )
 
 SUMMARY = {
@@ -266,3 +270,94 @@ def test_pn_leg_checks_its_inputs(tmp_path: Path) -> None:
     )
     with pytest.raises(subprocess.CalledProcessError):
         run_pn(args, runner)
+
+
+def _fake_pn_runner(calls: list) -> Callable[[list, Path], None]:
+    def runner(cmd: list, cwd: Path) -> None:
+        calls.append(cmd[2])
+        out = Path(cmd[cmd.index("--out") + 1])
+        if cmd[2] == "scripts/yardstick-pn.ts":
+            out.write_text(json.dumps(_pn_result(2, 1, 1)))
+        else:
+            games = int(cmd[cmd.index("--games") + 1])
+            out.write_text(
+                json.dumps(
+                    {
+                        "games": games,
+                        "wins": games // 2,
+                        "losses": games // 2,
+                        "draws": 0,
+                        "score": 0.5,
+                        "ci95": [0.2, 0.8],
+                    }
+                )
+            )
+
+    return runner
+
+
+def _all_args(tmp_path: Path, *extra: str) -> argparse.Namespace:
+    runs = tmp_path / "runs"
+    runs.mkdir(exist_ok=True)
+    (runs / "a.pt").write_bytes(b"")
+    (runs / "b.onnx").write_bytes(b"")
+    return build_parser().parse_args(
+        ["all", "--pn-dir", str(tmp_path), "--runs-dir", str(runs)]
+        + ["--pn-games", "4", "--elo-games", "4"]
+        + ["--out", str(tmp_path / "o"), *extra]
+    )
+
+
+def test_all_runs_three_legs_into_one_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "manamind.evaluation.yardsticks.onnx_for",
+        lambda ckpt, scratch, k: ckpt,
+    )
+    forged = []
+
+    def forge(ns: argparse.Namespace) -> str:
+        forged.append(ns)
+        return write_forge(SUMMARY, ns.out, ns.baseline)
+
+    calls: list = []
+    args = _all_args(
+        tmp_path, "--ckpts", "a.pt,b.onnx", "--forge-dir", str(tmp_path)
+    )
+    md = run_all(args, _fake_pn_runner(calls), forge)
+    assert forged[0].ckpts == "a.pt" and forged[0].games == 200
+    assert calls.count("scripts/yardstick-pn.ts") == 4
+    assert calls.count("scripts/gate-forge.ts") == 1
+    assert (
+        md.index("vs Forge AI (baseline 18.0%)")
+        < md.index("vs Planar Nexus Expert AI")
+        < md.index("Elo ladder")
+    )
+    report = json.loads((tmp_path / "o" / "all.json").read_text())
+    assert report["ckpts"] == ["a.pt", "b.onnx"]
+    assert len(report["pn"]["rows"]) == 4 and len(report["elo"]["rows"]) == 2
+    assert report["forge"]["baseline"] == 0.18
+    assert (tmp_path / "o" / "all.md").read_text() == md
+
+
+def test_all_skips_and_reports_failed_legs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "manamind.evaluation.yardsticks.onnx_for",
+        lambda ckpt, scratch, k: ckpt,
+    )
+
+    def runner(cmd: list, cwd: Path) -> None:
+        raise subprocess.CalledProcessError(1, cmd)
+
+    args = _all_args(tmp_path, "--ckpts", "b.onnx")
+    with pytest.raises(SystemExit, match="leg failed"):
+        run_all(args, runner)
+    report = json.loads((tmp_path / "o" / "all.json").read_text())
+    assert report["forge"] == {"skipped": "no --forge-dir"}
+    assert "failed" in report["pn"]
+    assert report["elo"] == {"skipped": "needs at least two checkpoints"}
+    with pytest.raises(SystemExit, match="--legs"):
+        run_all(_all_args(tmp_path, "--ckpts", "b.onnx", "--legs", "x"))
