@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 FORGE_BASELINE = 0.18
-DECKS = Path(__file__).resolve().parents[3] / "tools" / "forge-bridge"
+BRIDGE = Path(__file__).resolve().parents[3] / "tools" / "forge-bridge"
 
 
 def wilson_interval(
@@ -180,9 +180,9 @@ def build_parser() -> argparse.ArgumentParser:
     f = sub.add_parser("forge", help="score checkpoints vs Forge AI")
     f.add_argument("--forge-dir", type=Path)
     f.add_argument("--java", default="java")
-    f.add_argument("--bridge-out", type=Path, default=DECKS / "out")
-    f.add_argument("--deck-a", type=Path, default=DECKS / "decks" / "rg.dck")
-    f.add_argument("--deck-b", type=Path, default=DECKS / "decks" / "ub.dck")
+    f.add_argument("--bridge-out", type=Path, default=BRIDGE / "out")
+    f.add_argument("--deck-a", type=Path, default=BRIDGE / "decks" / "rg.dck")
+    f.add_argument("--deck-b", type=Path, default=BRIDGE / "decks" / "ub.dck")
     f.add_argument("--ckpts", help="comma list of checkpoints")
     f.add_argument("--runs-dir", type=Path, default=Path("."))
     f.add_argument("--games", type=int, default=200)

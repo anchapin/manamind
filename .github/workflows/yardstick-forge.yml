@@ -44,6 +44,7 @@ jobs:
       GAMES: ${{ github.event.inputs.games }}
       MODES: ${{ github.event.inputs.modes }}
       ISSUE: ${{ github.event.inputs.issue }}
+      REF: ${{ github.event.inputs.ref }}
       FORGE_VERSION: "2.0.15"
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -132,7 +133,7 @@ jobs:
           {
             cat "$OUT/forge.md"
             echo
-            echo "_${GAMES} games per checkpoint and mode, seats and decks alternated (rg.dck vs ub.dck). [Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}), ref \`${{ github.event.inputs.ref }}\`._"
+            echo "_${GAMES} games per checkpoint and mode, seats and decks alternated (rg.dck vs ub.dck). [Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}), ref \`${REF}\`._"
           } > "$OUT/comment.md"
           cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$ISSUE" ]; then
