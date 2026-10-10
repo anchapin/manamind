@@ -19,6 +19,17 @@ same fixed seeds every time, so each comparison sees the same deals). It is
 promoted only if its Expert score is at least the best champion's Expert
 score minus ``--anchor-margin``; otherwise the round counts as flat.
 
+Expert games (``--expert-games N``, off at 0, #96): each round also plays
+``N`` champion-vs-Expert games (``selfplay-forge.ts --opponent expert``,
+only the net's decisions recorded) into
+``<run>/buffer/round_NNNN_expert.jsonl.gz``, so training keeps seeing an
+outside opponent instead of only its own lineage.
+
+Decks (``--deck-a`` / ``--deck-b``): passed to the self-play, Expert-game
+and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
+Mono-Green Landfall decks the yardsticks measure; left unset, the scripts
+use the simulator's vanilla ``aggro`` / ``midrange`` decks.
+
 Kill switch: the loop stops for good once the Elo has been flat for
 ``--flat-rounds`` rounds in a row (default 3). State lives in
 ``<run>/loop.json``, so dispatching again resumes where it stopped.
@@ -29,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,6 +59,9 @@ Trainer = Callable[[List[str]], Dict[str, Any]]
 
 GATE_SEED_BASE = 1_000_000
 ANCHOR_SEED = 2_000_001
+# Champion-vs-Expert training games: seeds clear of self-play and gates.
+EXPERT_SEED_BASE = 3_000_000
+DECK_NAME = re.compile(r"^[a-z][a-z-]*$")
 
 
 def run_cmd(cmd: List[str], cwd: Path) -> None:
@@ -207,6 +222,11 @@ def run_round(
     (cand / "anchor.json").unlink(missing_ok=True)
     pn: Path = args.pn_dir
     tsx = ["npx", "tsx"]
+    decks: List[str] = []
+    if args.deck_a:
+        decks += ["--deck-a", args.deck_a]
+    if args.deck_b:
+        decks += ["--deck-b", args.deck_b]
     runner(
         tsx
         + [
@@ -221,9 +241,31 @@ def run_round(
             str(args.sims),
             "--out",
             str(buffer / f"round_{r:04d}.jsonl.gz"),
-        ],
+        ]
+        + decks,
         pn,
     )
+    if args.expert_games > 0:
+        runner(
+            tsx
+            + [
+                "scripts/selfplay-forge.ts",
+                "--model",
+                str(champ / "forge_pointer.onnx"),
+                "--opponent",
+                "expert",
+                "--games",
+                str(args.expert_games),
+                "--seed",
+                str(EXPERT_SEED_BASE + (r - 1) * args.expert_games + 1),
+                "--sims",
+                str(args.sims),
+                "--out",
+                str(buffer / f"round_{r:04d}_expert.jsonl.gz"),
+            ]
+            + decks,
+            pn,
+        )
     trainer(
         [
             "--data",
@@ -260,7 +302,8 @@ def run_round(
             str(args.threshold),
             "--out",
             str(gate_path),
-        ],
+        ]
+        + decks,
         pn,
     )
     gate = json.loads(gate_path.read_text())
@@ -363,6 +406,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.05,
         help="allowed drop below the best champion's Expert score",
     )
+    ap.add_argument(
+        "--expert-games",
+        type=int,
+        default=0,
+        help="champion-vs-Expert training games per round (0 = off)",
+    )
+    ap.add_argument(
+        "--deck-a", default=None, help="e.g. red (#2614); default aggro"
+    )
+    ap.add_argument(
+        "--deck-b", default=None, help="e.g. green (#2614); default midrange"
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--force", action="store_true", help="resume after the kill switch"
@@ -374,6 +429,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     args = build_parser().parse_args(argv)
     if args.anchor_games < 0 or args.anchor_games % 2:
         raise SystemExit("--anchor-games must be 0 or a positive even number")
+    if args.expert_games < 0:
+        raise SystemExit("--expert-games must be 0 or positive")
+    for deck in (args.deck_a, args.deck_b):
+        if deck is not None and not DECK_NAME.match(deck):
+            raise SystemExit(f"bad deck name {deck!r}")
     state = run(args)
     print(table(state))
 

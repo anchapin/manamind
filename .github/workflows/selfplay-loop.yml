@@ -35,7 +35,7 @@ on:
       args:
         description: "Extra args for manamind.training.selfplay_loop"
         required: true
-        default: "--games 500 --sims 16 --gate-games 40 --epochs 2 --anchor-games 100"
+        default: "--games 500 --sims 16 --gate-games 40 --epochs 2 --anchor-games 100 --expert-games 100 --deck-a red --deck-b green"
       issue:
         description: "Issue to post the table to (blank to skip)"
         required: false
