@@ -1,0 +1,159 @@
+# Head-to-head check between two ForgePointerNet ONNX checkpoints on Alex's
+# home PC (self-hosted runner labelled "manamind-train"). Manual dispatch
+# only. Runs planar-nexus scripts/gate-forge.ts once per mode, each seat with
+# its own search budget: the same checkpoint as candidate and baseline with
+# baseline_sims 0 measures what search adds over the raw policy (#96).
+# Checkpoints stay in ~/manamind-runs; only the gate JSON is uploaded and a
+# table posted to the issue.
+name: Gate check on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      pn_ref:
+        description: "planar-nexus branch or commit"
+        required: true
+        default: "main"
+      candidate:
+        description: "Candidate ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_mix/rounds/0000/forge_pointer.onnx"
+      baseline:
+        description: "Baseline ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_mix/rounds/0000/forge_pointer.onnx"
+      games:
+        description: "Games per mode (multiple of 4)"
+        required: true
+        default: "200"
+      sims:
+        description: "Candidate search simulations"
+        required: true
+        default: "16"
+      baseline_sims:
+        description: "Baseline search simulations (0 = raw policy)"
+        required: true
+        default: "0"
+      decks:
+        description: "deck-a,deck-b (red,green = #2614)"
+        required: true
+        default: "red,green"
+      modes:
+        description: "greedy, sample, or greedy,sample"
+        required: true
+        default: "greedy,sample"
+      issue:
+        description: "Issue to post the table to (blank to skip)"
+        required: false
+        default: "96"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-gate-check
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 600
+    env:
+      CANDIDATE: ${{ github.event.inputs.candidate }}
+      BASELINE: ${{ github.event.inputs.baseline }}
+      GAMES: ${{ github.event.inputs.games }}
+      SIMS: ${{ github.event.inputs.sims }}
+      BASELINE_SIMS: ${{ github.event.inputs.baseline_sims }}
+      DECKS: ${{ github.event.inputs.decks }}
+      MODES: ${{ github.event.inputs.modes }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ github.event.inputs.pn_ref }}
+          path: pn
+
+      - name: Validate inputs
+        run: |
+          for p in "$CANDIDATE" "$BASELINE"; do
+            [[ "$p" =~ ^[A-Za-z0-9._/-]+\.onnx$ ]] || { echo "bad checkpoint $p"; exit 1; }
+            [[ "$p" != *..* ]] || { echo "checkpoints must stay under ~/manamind-runs"; exit 1; }
+            [ -f "$HOME/manamind-runs/$p" ] || { echo "no $p"; exit 1; }
+          done
+          [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 && $((GAMES % 4)) -eq 0 ]] || { echo "games must be a positive multiple of 4"; exit 1; }
+          [[ "$SIMS" =~ ^[0-9]+$ ]] || { echo "bad sims"; exit 1; }
+          [[ "$BASELINE_SIMS" =~ ^[0-9]+$ ]] || { echo "bad baseline_sims"; exit 1; }
+          [[ "$DECKS" =~ ^[a-z][a-z-]*,[a-z][a-z-]*$ ]] || { echo "bad decks"; exit 1; }
+          [[ "$MODES" =~ ^(greedy|sample)(,(greedy|sample))?$ ]] || { echo "bad modes"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Planar Nexus card-script index
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
+
+      - name: Play the gate
+        shell: bash
+        working-directory: pn
+        run: |
+          mkdir -p ../results
+          IFS=, read -r DECK_A DECK_B <<< "$DECKS"
+          IFS=, read -r -a MODE_LIST <<< "$MODES"
+          for m in "${MODE_LIST[@]}"; do
+            FLAG=()
+            [ "$m" = greedy ] && FLAG=(--greedy)
+            npx tsx scripts/gate-forge.ts \
+              --candidate "$HOME/manamind-runs/$CANDIDATE" \
+              --baseline "$HOME/manamind-runs/$BASELINE" \
+              --games "$GAMES" --seed 4000001 --sims "$SIMS" \
+              --baseline-sims "$BASELINE_SIMS" \
+              --deck-a "$DECK_A" --deck-b "$DECK_B" "${FLAG[@]}" \
+              --out "../results/gate_check_$m.json"
+          done
+
+      - name: Post table
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY' > results/gate_check.md
+          import json, os, pathlib
+          env = os.environ
+          print("**Gate check**: candidate `%s` at %s sims vs baseline `%s` at %s sims (0 = raw policy), decks %s\n"
+                % (env["CANDIDATE"], env["SIMS"], env["BASELINE"], env["BASELINE_SIMS"], env["DECKS"]))
+          print("| Mode | Games | W-L-D | Candidate score | 95% CI |")
+          print("|:---|---:|:---:|---:|:---:|")
+          for m in env["MODES"].split(","):
+              p = pathlib.Path(f"results/gate_check_{m}.json")
+              if not p.exists():
+                  print(f"| {m} | - | - | failed | - |")
+                  continue
+              g = json.loads(p.read_text())
+              lo, hi = g["ci95"]
+              print(f"| {m} | {g['games']} | {g['wins']}-{g['losses']}-{g['draws']} | {g['score']:.3f} | [{lo:.3f}, {hi:.3f}] |")
+          print(f"\n_[Run]({env['RUN_URL']})_")
+          PY
+          cat results/gate_check.md
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" -R "${{ github.repository }}" --body-file results/gate_check.md
+          fi
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-check
+          path: results/
