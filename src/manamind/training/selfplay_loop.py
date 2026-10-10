@@ -36,6 +36,11 @@ noise (Gumbel MuZero), in self-play, Expert games and the gate. Sampling
 the search policy played about as well as the raw policy (0.535 vs bc.pt's
 prior, against 0.760 for the search's pick).
 
+Target softness (``--c-scale``, #96): the search's cScale in self-play and
+Expert games (default: the search's own, 1). At 16 sims each candidate gets
+one or two noisy value samples, and cScale 1 turns those into near one-hot
+targets; 0.1 keeps the target closer to the prior. The gate is unaffected.
+
 Kill switch: the loop stops for good once the Elo has been flat for
 ``--flat-rounds`` rounds in a row (default 3). State lives in
 ``<run>/loop.json``, so dispatching again resumes where it stopped.
@@ -236,6 +241,11 @@ def run_round(
     # Gumbel root sampling (#96): play the search's own pick, varied by
     # root noise, in self-play, Expert games and the gate.
     pick = ["--pick", "gumbel"] if args.pick == "gumbel" else []
+    # Softer completed-Q targets (#96): self-play and Expert games only; the
+    # gate keeps the search's default so it measures the usual player.
+    c_scale = (
+        ["--c-scale", repr(args.c_scale)] if args.c_scale is not None else []
+    )
     runner(
         tsx
         + [
@@ -252,7 +262,8 @@ def run_round(
             str(buffer / f"round_{r:04d}.jsonl.gz"),
         ]
         + decks
-        + pick,
+        + pick
+        + c_scale,
         pn,
     )
     if args.expert_games > 0:
@@ -274,7 +285,8 @@ def run_round(
                 str(buffer / f"round_{r:04d}_expert.jsonl.gz"),
             ]
             + decks
-            + pick,
+            + pick
+            + c_scale,
             pn,
         )
     trainer(
@@ -437,6 +449,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="move pick in self-play, Expert games and the gate: sample "
         "the search policy, or the search's pick under Gumbel root noise",
     )
+    ap.add_argument(
+        "--c-scale",
+        type=float,
+        default=None,
+        help="search cScale for self-play and Expert games (default: the "
+        "search's own, 1); lower softens the policy target",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--force", action="store_true", help="resume after the kill switch"
@@ -450,6 +469,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--anchor-games must be 0 or a positive even number")
     if args.expert_games < 0:
         raise SystemExit("--expert-games must be 0 or positive")
+    if args.c_scale is not None and not args.c_scale > 0:
+        raise SystemExit("--c-scale must be positive")
     for deck in (args.deck_a, args.deck_b):
         if deck is not None and not DECK_NAME.match(deck):
             raise SystemExit(f"bad deck name {deck!r}")

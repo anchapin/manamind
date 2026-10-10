@@ -306,3 +306,21 @@ def test_gumbel_pick_reaches_every_script(tmp_path: Path) -> None:
     fakes = Fakes([0.5])
     run(args(tmp_path / "plain"), fakes.runner, fakes.trainer)
     assert all("--pick" not in c for c in fakes.cmds)
+
+
+def test_c_scale_reaches_selfplay_but_not_gate(tmp_path: Path) -> None:
+    fakes = Fakes([0.5])
+    run(
+        args(tmp_path, "--expert-games", "4", "--c-scale", "0.1"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
+    assert len(plays) == 2
+    for cmd in plays:
+        assert cmd[cmd.index("--c-scale") + 1] == "0.1"
+    gates = [c for c in fakes.cmds if "scripts/gate-forge.ts" in c]
+    assert gates and all("--c-scale" not in c for c in gates)
+    fakes = Fakes([0.5])
+    run(args(tmp_path / "plain"), fakes.runner, fakes.trainer)
+    assert all("--c-scale" not in c for c in fakes.cmds)
