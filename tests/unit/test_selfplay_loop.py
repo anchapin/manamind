@@ -252,3 +252,37 @@ def test_rerun_round_drops_a_stale_candidate_anchor(tmp_path: Path) -> None:
     )
     assert state["history"][0]["expert"] == pytest.approx(0.10)
     assert state["history"][0]["vetoed"] is True
+
+
+def test_expert_games_and_decks_reach_the_scripts(tmp_path: Path) -> None:
+    a = args(
+        tmp_path,
+        "--expert-games",
+        "100",
+        "--deck-a",
+        "red",
+        "--deck-b",
+        "green",
+    )
+    fakes = Fakes([0.5])
+    run(a, fakes.runner, fakes.trainer)
+    plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
+    assert len(plays) == 2
+    expert = plays[1]
+    assert expert[expert.index("--opponent") + 1] == "expert"
+    assert expert[expert.index("--games") + 1] == "100"
+    assert expert[expert.index("--seed") + 1] == "3000001"
+    assert expert[expert.index("--out") + 1].endswith(
+        "round_0001_expert.jsonl.gz"
+    )
+    for cmd in fakes.cmds:
+        assert cmd[cmd.index("--deck-a") + 1] == "red"
+        assert cmd[cmd.index("--deck-b") + 1] == "green"
+
+
+def test_expert_games_and_decks_are_off_by_default(tmp_path: Path) -> None:
+    fakes = Fakes([0.5])
+    run(args(tmp_path), fakes.runner, fakes.trainer)
+    plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
+    assert len(plays) == 1
+    assert all("--deck-a" not in c and "--opponent" not in c for c in plays)
