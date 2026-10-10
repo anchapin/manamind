@@ -10,6 +10,7 @@ import pytest
 from manamind.training.selfplay_loop import (
     build_parser,
     elo_diff,
+    main,
     run,
     table,
 )
@@ -324,3 +325,18 @@ def test_c_scale_reaches_selfplay_but_not_gate(tmp_path: Path) -> None:
     fakes = Fakes([0.5])
     run(args(tmp_path / "plain"), fakes.runner, fakes.trainer)
     assert all("--c-scale" not in c for c in fakes.cmds)
+
+
+@pytest.mark.parametrize("value", ["0", "-0.5"])
+def test_c_scale_must_be_positive(tmp_path: Path, value: str) -> None:
+    with pytest.raises(SystemExit, match="--c-scale must be positive"):
+        main(
+            [
+                "--run-dir",
+                str(tmp_path),
+                "--pn-dir",
+                str(tmp_path),
+                "--c-scale",
+                value,
+            ]
+        )
