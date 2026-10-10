@@ -286,3 +286,23 @@ def test_expert_games_and_decks_are_off_by_default(tmp_path: Path) -> None:
     plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
     assert len(plays) == 1
     assert all("--deck-a" not in c and "--opponent" not in c for c in plays)
+
+
+def test_gumbel_pick_reaches_every_script(tmp_path: Path) -> None:
+    fakes = Fakes([0.5])
+    run(
+        args(tmp_path, "--expert-games", "4", "--pick", "gumbel"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    scripts = [
+        c
+        for c in fakes.cmds
+        if "scripts/selfplay-forge.ts" in c or "scripts/gate-forge.ts" in c
+    ]
+    assert len(scripts) == 3
+    for cmd in scripts:
+        assert cmd[cmd.index("--pick") + 1] == "gumbel"
+    fakes = Fakes([0.5])
+    run(args(tmp_path / "plain"), fakes.runner, fakes.trainer)
+    assert all("--pick" not in c for c in fakes.cmds)

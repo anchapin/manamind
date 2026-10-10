@@ -30,6 +30,12 @@ and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
 Mono-Green Landfall decks the yardsticks measure; left unset, the scripts
 use the simulator's vanilla ``aggro`` / ``midrange`` decks.
 
+Move pick (``--pick``, #96): ``sample`` (default) draws each move from the
+search policy; ``gumbel`` plays the search's own pick under Gumbel root
+noise (Gumbel MuZero), in self-play, Expert games and the gate. Sampling
+the search policy played about as well as the raw policy (0.535 vs bc.pt's
+prior, against 0.760 for the search's pick).
+
 Kill switch: the loop stops for good once the Elo has been flat for
 ``--flat-rounds`` rounds in a row (default 3). State lives in
 ``<run>/loop.json``, so dispatching again resumes where it stopped.
@@ -227,6 +233,9 @@ def run_round(
         decks += ["--deck-a", args.deck_a]
     if args.deck_b:
         decks += ["--deck-b", args.deck_b]
+    # Gumbel root sampling (#96): play the search's own pick, varied by
+    # root noise, in self-play, Expert games and the gate.
+    pick = ["--pick", "gumbel"] if args.pick == "gumbel" else []
     runner(
         tsx
         + [
@@ -242,7 +251,8 @@ def run_round(
             "--out",
             str(buffer / f"round_{r:04d}.jsonl.gz"),
         ]
-        + decks,
+        + decks
+        + pick,
         pn,
     )
     if args.expert_games > 0:
@@ -263,7 +273,8 @@ def run_round(
                 "--out",
                 str(buffer / f"round_{r:04d}_expert.jsonl.gz"),
             ]
-            + decks,
+            + decks
+            + pick,
             pn,
         )
     trainer(
@@ -303,7 +314,8 @@ def run_round(
             "--out",
             str(gate_path),
         ]
-        + decks,
+        + decks
+        + pick,
         pn,
     )
     gate = json.loads(gate_path.read_text())
@@ -417,6 +429,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--deck-b", default=None, help="e.g. green (#2614); default midrange"
+    )
+    ap.add_argument(
+        "--pick",
+        choices=["sample", "gumbel"],
+        default="sample",
+        help="move pick in self-play, Expert games and the gate: sample "
+        "the search policy, or the search's pick under Gumbel root noise",
     )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
