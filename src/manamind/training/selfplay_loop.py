@@ -401,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--games", type=int, default=500)
     ap.add_argument("--sims", type=int, default=16)
-    ap.add_argument("--gate-games", type=int, default=40)
+    ap.add_argument("--gate-games", type=int, default=200)
     ap.add_argument("--threshold", type=float, default=0.55)
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--buffer-games", type=int, default=BUFFER_GAMES)
