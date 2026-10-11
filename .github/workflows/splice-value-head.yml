@@ -1,0 +1,65 @@
+name: Splice value head on home PC
+
+# Diagnostic for #96: put one checkpoint's value head on another's network
+# and export ONNX, so gate-check.yml can tell value-head damage from policy
+# drift. Paths are relative to ~/manamind-runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      policy:
+        description: "Checkpoint (.pt) whose network to keep"
+        required: true
+      value:
+        description: "Checkpoint (.pt) whose value head to use"
+        required: true
+      out:
+        description: "New directory for last.pt + forge_pointer.onnx"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-pc-splice
+  cancel-in-progress: false
+
+jobs:
+  splice:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 30
+    env:
+      POLICY: ${{ github.event.inputs.policy }}
+      VALUE: ${{ github.event.inputs.value }}
+      OUT: ${{ github.event.inputs.out }}
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          for p in "$POLICY" "$VALUE"; do
+            [[ "$p" =~ ^[A-Za-z0-9._/-]+\.pt$ ]] || { echo "bad checkpoint $p"; exit 1; }
+            [[ "$p" != *..* ]] || { echo "checkpoints must stay under ~/manamind-runs"; exit 1; }
+            [ -f "$HOME/manamind-runs/$p" ] || { echo "no $p"; exit 1; }
+          done
+          [[ "$OUT" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "bad out"; exit 1; }
+          [[ "$OUT" != *..* ]] || { echo "out must stay under ~/manamind-runs"; exit 1; }
+          [ ! -e "$HOME/manamind-runs/$OUT" ] || { echo "$OUT already exists"; exit 1; }
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e . onnx onnxruntime
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Splice and export
+        run: |
+          PYTHONPATH=src python -m manamind.models.splice \
+            --policy "$HOME/manamind-runs/$POLICY" \
+            --value "$HOME/manamind-runs/$VALUE" \
+            --out "$HOME/manamind-runs/$OUT"
+          ls -l "$HOME/manamind-runs/$OUT"
