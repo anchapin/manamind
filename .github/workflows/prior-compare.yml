@@ -1,0 +1,161 @@
+# Compare two ForgePointerNet ONNX checkpoints' root priors on Alex's home PC
+# (self-hosted runner labelled "manamind-train"), #96. Manual dispatch only.
+# Runs planar-nexus scripts/compare-priors-forge.ts: plays gate games between
+# the two (same seeds, seats and deck rotation as gate-check) and at every
+# decision scores both nets' priors on the same position. Checkpoints stay
+# in ~/manamind-runs; only the JSON is uploaded and a table posted to the
+# issue. A = baseline, B = candidate.
+name: Prior compare on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      pn_ref:
+        description: "planar-nexus branch or commit"
+        required: true
+        default: "main"
+      candidate:
+        description: "Candidate ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_cs01/rounds/0001/forge_pointer.onnx"
+      baseline:
+        description: "Baseline ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_cs01/rounds/0000/forge_pointer.onnx"
+      games:
+        description: "Games (multiple of 4)"
+        required: true
+        default: "48"
+      sims:
+        description: "Candidate search simulations"
+        required: true
+        default: "16"
+      baseline_sims:
+        description: "Baseline search simulations (0 = raw policy)"
+        required: true
+        default: "16"
+      decks:
+        description: "deck-a,deck-b (red,green = #2614)"
+        required: true
+        default: "red,green"
+      mode:
+        description: "greedy or sample"
+        required: true
+        default: "sample"
+      issue:
+        description: "Issue to post the table to (blank to skip)"
+        required: false
+        default: "96"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-gate-check
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 120
+    env:
+      CANDIDATE: ${{ github.event.inputs.candidate }}
+      BASELINE: ${{ github.event.inputs.baseline }}
+      GAMES: ${{ github.event.inputs.games }}
+      SIMS: ${{ github.event.inputs.sims }}
+      BASELINE_SIMS: ${{ github.event.inputs.baseline_sims }}
+      DECKS: ${{ github.event.inputs.decks }}
+      MODE: ${{ github.event.inputs.mode }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ github.event.inputs.pn_ref }}
+          path: pn
+
+      - name: Validate inputs
+        run: |
+          for p in "$CANDIDATE" "$BASELINE"; do
+            [[ "$p" =~ ^[A-Za-z0-9._/-]+\.onnx$ ]] || { echo "bad checkpoint $p"; exit 1; }
+            [[ "$p" != *..* ]] || { echo "checkpoints must stay under ~/manamind-runs"; exit 1; }
+            [ -f "$HOME/manamind-runs/$p" ] || { echo "no $p"; exit 1; }
+          done
+          [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 && $((GAMES % 4)) -eq 0 ]] || { echo "games must be a positive multiple of 4"; exit 1; }
+          [[ "$SIMS" =~ ^[0-9]+$ ]] || { echo "bad sims"; exit 1; }
+          [[ "$BASELINE_SIMS" =~ ^[0-9]+$ ]] || { echo "bad baseline_sims"; exit 1; }
+          [[ "$DECKS" =~ ^[a-z][a-z-]*,[a-z][a-z-]*$ ]] || { echo "bad decks"; exit 1; }
+          [[ "$MODE" =~ ^(greedy|sample)$ ]] || { echo "bad mode"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Planar Nexus card-script index
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
+
+      - name: Compare priors
+        shell: bash
+        working-directory: pn
+        run: |
+          mkdir -p ../results
+          IFS=, read -r DECK_A DECK_B <<< "$DECKS"
+          FLAG=()
+          [ "$MODE" = greedy ] && FLAG=(--greedy)
+          npx tsx scripts/compare-priors-forge.ts \
+            --candidate "$HOME/manamind-runs/$CANDIDATE" \
+            --baseline "$HOME/manamind-runs/$BASELINE" \
+            --games "$GAMES" --seed 4000001 --sims "$SIMS" \
+            --baseline-sims "$BASELINE_SIMS" \
+            --deck-a "$DECK_A" --deck-b "$DECK_B" "${FLAG[@]}" \
+            --out ../results/prior_compare.json
+
+      - name: Post table
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY' > results/prior_compare.md
+          import json, os, pathlib
+          env = os.environ
+          p = pathlib.Path("results/prior_compare.json")
+          print("**Prior compare**: A = baseline `%s`, B = candidate `%s`, %s vs %s sims, %s, decks %s\n"
+                % (env["BASELINE"], env["CANDIDATE"], env["SIMS"], env["BASELINE_SIMS"], env["MODE"], env["DECKS"]))
+          if not p.exists():
+              print("Failed: no results.")
+          else:
+              d = json.loads(p.read_text())
+              g = d["gate"]
+              print(f"Gate over these games: B {g['wins']}-{g['losses']}-{g['draws']}, score {g['score']:.3f}\n")
+              for title, key in (("All positions", "priors"), ("Positions where B is to act", "priors_candidate_to_act")):
+                  print(f"{title}:\n")
+                  print("| Kind | Positions | Actions | Entropy A / B | Top-1 prob A / B | Same top-1 | Top-3 overlap | B on A's top | TV distance |")
+                  print("|:---|---:|---:|:---:|:---:|---:|---:|---:|---:|")
+                  for r in d[key]:
+                      print(f"| {r['kind']} | {r['positions']} | {r['meanActions']:.1f} | {r['entropyA']:.3f} / {r['entropyB']:.3f} | "
+                            f"{r['top1A']:.3f} / {r['top1B']:.3f} | {r['agree']:.3f} | {r['top3Overlap']:.3f} | {r['bOnTopA']:.3f} | {r['tv']:.3f} |")
+                  print()
+          print(f"_[Run]({env['RUN_URL']})_")
+          PY
+          cat results/prior_compare.md
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" -R "${{ github.repository }}" --body-file results/prior_compare.md
+          fi
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prior-compare
+          path: results/
