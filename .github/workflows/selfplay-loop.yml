@@ -3,7 +3,9 @@
 # Each round: Planar Nexus self-play with the champion -> train_selfplay on
 # the newest 20,000 games -> head-to-head gate -> promote or keep. Stops for
 # good when the Elo has been flat for 3 rounds (re-dispatch with force=true
-# to go on). With --anchor-games N a promotion must also hold up against the
+# to go on; with --fork-on-plateau in args the kill switch fans out fork
+# probes instead, arXiv:2610.07447). With --anchor-games N a promotion must
+# also hold up against the
 # Planar Nexus Expert AI (N games, fixed seeds; see selfplay_loop.py).
 # State, buffer and checkpoints stay in ~/manamind-runs/<run_name>; only
 # the table and gate/anchor results are uploaded.

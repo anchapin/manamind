@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
+import torch.nn as nn
 
 from manamind.models.forge_pointer import (
     ForgePointerNet,
@@ -35,6 +36,18 @@ from manamind.models.forge_pointer import (
 
 BUFFER_GAMES = 20_000
 """Replay buffer cap from #87: the newest this many games."""
+
+
+def reset_value_head(net: ForgePointerNet) -> None:
+    """Re-initialize the value head, keeping the policy trunk.
+
+    Fork-and-flush's flush (arXiv:2610.07447): a probe that trains from
+    an inherited checkpoint but starts its value head over can land in a
+    different region than the lineage it came from.
+    """
+    for module in net.value_head.modules():
+        if isinstance(module, nn.Linear):
+            module.reset_parameters()
 
 
 def _open(path: Path) -> Iterable[str]:
@@ -163,6 +176,8 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     if args.init is not None:
         net, prev = load_pointer_net(str(args.init))
         parent_games = int((prev or {}).get("selfplay_games_total", 0))
+        if args.flush_value_head:
+            reset_value_head(net)
     else:
         net, parent_games = ForgePointerNet(), 0
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
@@ -216,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--value-coef", type=float, default=1.0)
+    ap.add_argument(
+        "--flush-value-head",
+        action="store_true",
+        help="re-initialize the value head after loading --init",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--onnx", action="store_true", help="also export forge_pointer.onnx"
