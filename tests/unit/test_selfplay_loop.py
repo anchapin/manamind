@@ -327,6 +327,153 @@ def test_c_scale_reaches_selfplay_but_not_gate(tmp_path: Path) -> None:
     assert all("--c-scale" not in c for c in fakes.cmds)
 
 
+def test_fork_on_plateau_fans_out_and_promotes_best(tmp_path: Path) -> None:
+    # Rounds 1-2 flat, so the kill switch fans out two probes at
+    # c-scales 0.25 and 0.5; the second scores higher and becomes champion.
+    fakes = Fakes([0.5, 0.45, 0.6, 0.7, 0.4])
+    state = run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--fork-on-plateau",
+            "--fork-c-scales",
+            "0.25,0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    # Three loop iterations: two flat rounds, then the fork (two probes),
+    # then one serial round from the new champion.
+    assert state["round"] == 5
+    assert state["champion"] == "rounds/0004"
+    assert state["stopped"] is None and state["flat"] == 1
+    assert state["rises"] == 1
+    assert [h.get("fork") for h in state["history"]] == [
+        None,
+        None,
+        1,
+        2,
+        None,
+    ]
+    assert state["elo"] == pytest.approx(elo_diff(0.7, 20))
+    plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
+    # Both probes play from the flatlined champion at their own c-scale;
+    # the later serial round plays from the promoted one.
+    assert all(
+        c[c.index("--model") + 1].endswith("rounds/0000/forge_pointer.onnx")
+        for c in plays[2:4]
+    )
+    assert plays[4][plays[4].index("--model") + 1].endswith(
+        "rounds/0004/forge_pointer.onnx"
+    )
+    assert [c[c.index("--c-scale") + 1] for c in plays[2:4]] == ["0.25", "0.5"]
+    # Probe seeds live in their own blocks, clear of the serial rounds'.
+    assert plays[2][plays[2].index("--seed") + 1] == "5000005"
+    assert plays[3][plays[3].index("--seed") + 1] == "5000008"
+    gate_seeds = [
+        c[c.index("--seed") + 1]
+        for c in fakes.cmds
+        if "scripts/gate-forge.ts" in c
+    ]
+    assert gate_seeds == [
+        "1000001",
+        "1000021",
+        "6000005",
+        "6000008",
+        "1000081",
+    ]
+    # Probes train from the champion checkpoint (fresh optimizer each);
+    # the later serial round trains from the promoted one.
+    assert all(
+        t2[t2.index("--init") + 1].endswith("rounds/0000/last.pt")
+        for t2 in fakes.trains[2:4]
+    )
+    assert fakes.trains[4][fakes.trains[4].index("--init") + 1].endswith(
+        "rounds/0004/last.pt"
+    )
+    assert "promoted (fork)" in (tmp_path / "run" / "loop.md").read_text()
+
+
+def test_fork_round_keeps_champion_and_stops_without_a_pass(
+    tmp_path: Path,
+) -> None:
+    fakes = Fakes([0.5, 0.45, 0.5, 0.4])
+    state = run(
+        args(
+            tmp_path,
+            "--rounds",
+            "10",
+            "--flat-rounds",
+            "2",
+            "--fork-on-plateau",
+            "--fork-c-scales",
+            "0.25,0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert state["round"] == 4
+    assert state["champion"] == "rounds/0000"
+    assert state["rises"] == 0 and state["elo"] == 0.0
+    assert state["stopped"] is not None
+    assert "fork round: no probe promoted" in state["stopped"]
+    assert "Stopped: fork round" in table(state)
+
+
+def test_kill_switch_stops_when_forking_is_off(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6])
+    state = run(
+        args(tmp_path, "--rounds", "10", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert state["round"] == 2
+    assert state["stopped"] == "Elo flat for 2 rounds"
+    assert not any(h.get("fork") for h in state["history"])
+
+
+def test_fork_flush_value_head_reaches_the_trainer(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--fork-on-plateau",
+            "--fork-c-scales",
+            "0.5",
+            "--fork-flush-value-head",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--flush-value-head" in fakes.trains[2]
+    assert "--flush-value-head" not in fakes.trains[0]
+
+
+@pytest.mark.parametrize("value", ["", "0", "0.5,-1", "abc"])
+def test_fork_c_scales_must_be_positive(
+    tmp_path: Path, value: str, capsys: pytest.CaptureFixture
+) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--run-dir",
+                str(tmp_path),
+                "--pn-dir",
+                str(tmp_path),
+                "--fork-c-scales",
+                value,
+            ]
+        )
+    assert "c-scale" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("value", ["0", "-0.5"])
 def test_c_scale_must_be_positive(tmp_path: Path, value: str) -> None:
     with pytest.raises(SystemExit, match="--c-scale must be positive"):

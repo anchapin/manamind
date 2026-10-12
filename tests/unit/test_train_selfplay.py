@@ -16,6 +16,7 @@ from manamind.training.train_selfplay import (
     build_parser,
     flatten,
     load_selfplay,
+    reset_value_head,
     run,
     train_epochs,
 )
@@ -170,3 +171,16 @@ def test_cli_exports_onnx(tmp_path: Path) -> None:
     )
     assert Path(meta["onnx"]).exists()
     assert (out / "forge_pointer.schema.json").exists()
+
+
+def test_reset_value_head_changes_head_and_keeps_trunk() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    before = {n: p.detach().clone() for n, p in net.named_parameters()}
+    reset_value_head(net)
+    after = dict(net.named_parameters())
+    changed = [n for n in before if not torch.equal(before[n], after[n])]
+    assert changed
+    assert all("value_head" in n for n in changed)
+    kept = [n for n in before if "value_head" not in n]
+    assert all(torch.equal(before[n], after[n]) for n in kept)
