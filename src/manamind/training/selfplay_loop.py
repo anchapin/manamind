@@ -321,6 +321,11 @@ def run_round(
             str(args.seed + r),
             "--onnx",
         ]
+        + (
+            ["--kl-weighted", "--kl-eps", str(args.kl_eps)]
+            if args.kl_weighted
+            else []
+        )
     )
     gate_path = cand / "gate.json"
     runner(
@@ -684,6 +689,18 @@ def build_parser() -> argparse.ArgumentParser:
         "search's own, 1); lower softens the policy target",
     )
     ap.add_argument(
+        "--kl-weighted",
+        action="store_true",
+        help="forward --kl-weighted to train_selfplay: resample each "
+        "epoch by the target-vs-prior audit metric (#96)",
+    )
+    ap.add_argument(
+        "--kl-eps",
+        type=float,
+        default=0.01,
+        help="eps floor for the KL weighting (with --kl-weighted)",
+    )
+    ap.add_argument(
         "--fork-on-plateau",
         action="store_true",
         help="on the kill switch, fan out fork probes instead of stopping",
@@ -712,6 +729,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--anchor-games must be 0 or a positive even number")
     if args.expert_games < 0:
         raise SystemExit("--expert-games must be 0 or positive")
+    if args.kl_eps < 0:
+        raise SystemExit("--kl-eps must be non-negative")
     if args.c_scale is not None and not args.c_scale > 0:
         raise SystemExit("--c-scale must be positive")
     if args.flat_rounds < 1:
