@@ -141,6 +141,9 @@ jobs:
           for a in "$RUN_DIR"/rounds/*/anchor.json; do
             [ -f "$a" ] && cp "$a" "results/selfplay_${RUN_NAME}_anchor_$(basename "$(dirname "$a")").json"
           done
+          for t in "$RUN_DIR"/rounds/*/selfplay_train.json; do
+            [ -f "$t" ] && cp "$t" "results/selfplay_${RUN_NAME}_train_$(basename "$(dirname "$t")").json"
+          done
           true
 
       - name: Post table
