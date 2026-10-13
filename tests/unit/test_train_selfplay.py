@@ -14,7 +14,9 @@ from manamind.models.forge_pointer import (
 )
 from manamind.training.train_selfplay import (
     build_parser,
+    carve_holdout,
     flatten,
+    holdout_loss,
     load_selfplay,
     reset_value_head,
     run,
@@ -184,3 +186,71 @@ def test_reset_value_head_changes_head_and_keeps_trunk() -> None:
     assert all("value_head" in n for n in changed)
     kept = [n for n in before if "value_head" not in n]
     assert all(torch.equal(before[n], after[n]) for n in kept)
+
+
+def test_carve_holdout_deterministic_and_capped() -> None:
+    samples = [({"t": "priority"}, 1.0)] * 100
+    train, hold = carve_holdout(samples, 0.1, 1)
+    assert len(hold) == 10 and len(train) == 90
+    train2, hold2 = carve_holdout(samples, 0.1, 1)
+    assert hold == hold2 and train == train2
+    one_train, one_hold = carve_holdout(samples[:1], 0.1, 1)
+    assert one_hold == [] and one_train == samples[:1]
+
+
+def test_holdout_loss_evaluates_without_gradients() -> None:
+    net = ForgePointerNet()
+    samples = [({**PRIORITY, "t": "priority"}, 1.0) for _ in range(4)]
+    stats = holdout_loss(net, samples, batch=2)
+    assert stats is not None
+    assert set(stats) == {"loss", "policy", "value", "used_frac"}
+    assert stats["used_frac"] == 1.0
+    assert holdout_loss(net, []) is None
+
+
+def test_run_carves_holdout_and_records_it(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(json.dumps(_game(s, 2)) + "\n" for s in range(3)))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0.2",
+            ]
+        )
+    )
+    assert meta["holdout_examples"] > 0
+    assert set(meta["holdout"]) == {"loss", "policy", "value", "used_frac"}
+    assert (out / "selfplay_train.json").exists()
+    meta2 = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "round2"),
+                "--holdout-frac",
+                "0.2",
+            ]
+        )
+    )
+    assert meta2["holdout_examples"] == meta["holdout_examples"]
+    meta3 = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "round3"),
+                "--holdout-frac",
+                "0",
+            ]
+        )
+    )
+    assert meta3["holdout_examples"] == 0 and "holdout" not in meta3
+    assert meta3["decisions"] == meta["decisions"]
