@@ -33,6 +33,7 @@ from manamind.models.forge_pointer import (
     distill_loss,
     load_pointer_net,
 )
+from manamind.training.audit_labels import audit_decision
 
 BUFFER_GAMES = 20_000
 """Replay buffer cap from #87: the newest this many games."""
@@ -106,6 +107,42 @@ def flatten(
     ]
 
 
+def kl_weights(
+    net: ForgePointerNet,
+    samples: Sequence[Tuple[Dict[str, Any], float]],
+    eps: float = 0.01,
+) -> List[float]:
+    """Per-sample weights from the audit's target-vs-prior metric (#96).
+
+    ``metric`` is the audit KL for priority/block decisions and the mean
+    absolute probability gap for attack (whose target is an independent
+    attack probability, not a distribution); weights are
+    ``(metric + eps) / (mean metric + eps)``, so the average weight is 1,
+    the disagreement tail is oversampled, and near-identity moves keep
+    only the ``eps`` floor. Decisions ``audit_decision`` rejects
+    (unusable shape) weight exactly 1.
+    """
+    metrics: List[Optional[float]] = []
+    was_training = net.training
+    net.eval()
+    with torch.no_grad():
+        for d, _ in samples:
+            read = audit_decision(net, d)
+            if read is None:
+                metrics.append(None)
+            elif read["kind"] == "attack":
+                metrics.append(read["abs_diff"])
+            else:
+                metrics.append(read["kl"])
+    if was_training:
+        net.train()
+    usable = [m for m in metrics if m is not None]
+    if not usable:
+        return [1.0] * len(samples)
+    denom = sum(usable) / len(usable) + eps
+    return [1.0 if m is None else (m + eps) / denom for m in metrics]
+
+
 def train_epochs(
     net: ForgePointerNet,
     opt: torch.optim.Optimizer,
@@ -115,16 +152,29 @@ def train_epochs(
     value_coef: float = 1.0,
     seed: int = 0,
     log: Optional[List[Dict[str, Any]]] = None,
+    weights: Optional[Sequence[float]] = None,
 ) -> Dict[str, float]:
-    """Minibatch passes over ``samples``; returns the last epoch's means."""
+    """Minibatch passes over ``samples``; returns the last epoch's means.
+
+    With ``weights``, each epoch draws ``len(samples)`` indices with
+    replacement weighted by ``weights`` (weighted resampling); otherwise
+    it shuffles uniformly.
+    """
     if not samples:
         raise ValueError("no self-play decisions to train on")
+    if weights is not None and len(weights) != len(samples):
+        raise ValueError("weights length must match samples")
     rng = random.Random(seed)
     order = list(range(len(samples)))
     net.train()
     means: Dict[str, float] = {}
     for epoch in range(epochs):
-        rng.shuffle(order)
+        if weights is not None:
+            order = rng.choices(
+                range(len(samples)), weights=weights, k=len(samples)
+            )
+        else:
+            rng.shuffle(order)
         totals: Dict[str, float] = {}
         n = 0
         for start in range(0, len(order), batch):
@@ -240,6 +290,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     else:
         net, parent_games = ForgePointerNet(), 0
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
+    weights: Optional[List[float]] = None
+    if args.kl_weighted:
+        weights = kl_weights(net, train_samples, eps=args.kl_eps)
     t0 = time.time()
     history: List[Dict[str, Any]] = []
     stats = train_epochs(
@@ -251,6 +304,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         value_coef=args.value_coef,
         seed=args.seed,
         log=history,
+        weights=weights,
     )
     meta: Dict[str, Any] = {
         "phase": "selfplay",
@@ -261,6 +315,8 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "epochs": args.epochs,
         "holdout_frac": args.holdout_frac,
         "holdout_examples": len(holdout),
+        "kl_weighted": args.kl_weighted,
+        "kl_eps": args.kl_eps if args.kl_weighted else None,
         "secs": round(time.time() - t0, 1),
         "history": history,
         **{f"final_{k}": round(v, 5) for k, v in stats.items()},
@@ -303,6 +359,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=HOLDOUT_FRAC,
         help="fraction of decisions held out of training and evaluated "
         "afterward (0 disables; #96 diagnosis)",
+    )
+    ap.add_argument(
+        "--kl-weighted",
+        action="store_true",
+        help="resample each epoch by the target-vs-prior audit metric so "
+        "the disagreement tail drives the policy (#96)",
+    )
+    ap.add_argument(
+        "--kl-eps",
+        type=float,
+        default=0.01,
+        help="eps floor in the KL weighting (with --kl-weighted)",
     )
     ap.add_argument(
         "--flush-value-head",
