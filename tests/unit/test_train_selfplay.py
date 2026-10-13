@@ -17,6 +17,7 @@ from manamind.training.train_selfplay import (
     carve_holdout,
     flatten,
     holdout_loss,
+    kl_weights,
     load_selfplay,
     reset_value_head,
     run,
@@ -254,3 +255,41 @@ def test_run_carves_holdout_and_records_it(tmp_path: Path) -> None:
     )
     assert meta3["holdout_examples"] == 0 and "holdout" not in meta3
     assert meta3["decisions"] == meta["decisions"]
+
+
+def test_kl_weights_mean_one_floor_and_deterministic() -> None:
+    torch.manual_seed(2)
+    net = ForgePointerNet()
+    samples = flatten([_game(0, n=3)])
+    weights = kl_weights(net, samples, eps=0.01)
+    assert len(weights) == len(samples)
+    assert abs(sum(weights) / len(weights) - 1.0) < 1e-6
+    # unusable decisions (bad shape) weight exactly 1
+    weights_bad = kl_weights(
+        net, samples + [({**ATTACK, "pi": [0.5]}, 1.0)], eps=0.01
+    )
+    assert weights_bad[-1] == 1.0
+    # a bigger eps floor shrinks the spread toward uniform
+    assert max(kl_weights(net, samples, eps=10.0)) < max(weights)
+    # deterministic on the same net
+    assert kl_weights(net, samples, eps=0.01) == weights
+
+
+def test_train_epochs_weighted_resamples_and_rejects_mismatch() -> None:
+    samples = flatten([_game(0, n=2)])
+    weights = [1.0] * len(samples)
+    torch.manual_seed(4)
+    net = ForgePointerNet()
+    opt = torch.optim.Adam(net.parameters(), lr=3e-4)
+    a = train_epochs(
+        net, opt, samples, epochs=1, batch=2, seed=6, weights=weights
+    )
+    torch.manual_seed(4)
+    net2 = ForgePointerNet()
+    opt2 = torch.optim.Adam(net2.parameters(), lr=3e-4)
+    b = train_epochs(
+        net2, opt2, samples, epochs=1, batch=2, seed=6, weights=weights
+    )
+    assert a["used_frac"] == b["used_frac"] == 1.0
+    with pytest.raises(ValueError):
+        train_epochs(net, opt, samples, epochs=1, weights=[1.0])
