@@ -1,0 +1,106 @@
+# Read-only label audit for a finished self-play run (#96): scores the
+# stored search targets pi against the champion's raw prior (KL) and the
+# value head against game returns (corr / MSE / no-skill floor). Plays no
+# games and trains nothing; reads ~/manamind-runs/<run_name>/buffer only.
+name: Label audit on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Finished run name (state under ~/manamind-runs/<run_name>)"
+        required: true
+        default: "selfplay_rg2614_holdout"
+      model:
+        description: "Champion checkpoint under the run dir (blank = rounds/0000/last.pt)"
+        required: false
+        default: ""
+      max_games:
+        description: "Games per buffer file (0 = all)"
+        required: false
+        default: "500"
+      issue:
+        description: "Issue to post the summary to (blank = none)"
+        required: false
+        default: ""
+
+concurrency:
+  group: home-pc-audit-${{ github.event.inputs.run_name }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || 'main' }}
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e . onnx onnxruntime
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Run label audit
+        run: |
+          set -o pipefail
+          RUN_DIR="$HOME/manamind-runs/${{ github.event.inputs.run_name }}"
+          [ -d "$RUN_DIR" ] || { echo "no $RUN_DIR"; exit 1; }
+          mkdir -p results
+          MODEL_ARG=""
+          [ -n "${{ github.event.inputs.model }}" ] && MODEL_ARG="--model $HOME/manamind-runs/${{ github.event.inputs.model }}"
+          PYTHONPATH=src python -m manamind.training.audit_labels \
+            --run-dir "$RUN_DIR" $MODEL_ARG \
+            --max-games ${{ github.event.inputs.max_games }} \
+            --out "results/audit_${{ github.event.inputs.run_name }}.json" 2>&1 \
+            | tee "results/audit_${{ github.event.inputs.run_name }}.log"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-labels-${{ github.event.inputs.run_name }}
+          path: results/
+          if-no-files-found: warn
+
+      - name: Post summary
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.inputs.issue }}
+          RUN_NAME: ${{ github.event.inputs.run_name }}
+        run: |
+          [ -s "results/audit_${RUN_NAME}.json" ] || exit 0
+          python3 - <<'PY' > results/audit_summary.md
+          import json, os
+          name = os.environ["RUN_NAME"]
+          d = json.load(open(f"results/audit_{name}.json"))
+          print(f"**Label audit `{name}`**\n")
+          print("| Buffer | Games | kind | n | KL mean / median / p90 | top1 agree | value corr / MSE / floor |")
+          print("|---|---:|---|---:|---:|---:|---:|")
+          for b in d["buffers"]:
+              v = b["value"]
+              vs = f"{v['corr']:.3f} / {v['mse']:.3f} / {v['floor_mse']:.3f}" if v["corr"] is not None else "-"
+              for kind, k in b["kinds"].items():
+                  if not k["n"]:
+                      continue
+                  if kind == "attack":
+                      kl = f"bce {k['prior_bce']:.4f}, |d| {k['abs_diff']:.4f}"
+                  else:
+                      kl = f"{k['kl_mean']:.4f} / {k['kl_median']:.4f} / {k['kl_p90']:.4f}"
+                  print(f"| {b['file']} | {b['games']} | {kind} | {k['n']} | {kl} | {k['top1_agree']:.3f} | {vs} |")
+          PY
+          cat results/audit_summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ISSUE" ]; then
+            {
+              echo "**Label audit \`${RUN_NAME}\`** (read-only, no new games)"
+              echo
+              cat results/audit_summary.md
+            } > results/comment.md
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file results/comment.md
+          fi
