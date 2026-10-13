@@ -146,6 +146,62 @@ def train_epochs(
     return means
 
 
+HOLDOUT_FRAC = 0.1
+"""Default fraction of decisions carved out as a fixed holdout (#96)."""
+
+
+def carve_holdout(
+    samples: List[Tuple[Dict[str, Any], float]],
+    frac: float,
+    seed: int,
+) -> Tuple[
+    List[Tuple[Dict[str, Any], float]], List[Tuple[Dict[str, Any], float]]
+]:
+    """Split samples into ``(train, holdout)`` deterministically (#96).
+
+    The holdout is drawn at random with ``seed`` so a run is reproducible,
+    and is capped at half the samples so tiny buffers still train.
+    """
+    n = int(len(samples) * frac)
+    n = min(n, len(samples) // 2) if samples else 0
+    if n <= 0:
+        return list(samples), []
+    rng = random.Random(seed)
+    idx = set(rng.sample(range(len(samples)), n))
+    return (
+        [s for i, s in enumerate(samples) if i not in idx],
+        [samples[i] for i in sorted(idx)],
+    )
+
+
+def holdout_loss(
+    net: ForgePointerNet,
+    samples: Sequence[Tuple[Dict[str, Any], float]],
+    batch: int = 64,
+    value_coef: float = 1.0,
+) -> Optional[Dict[str, float]]:
+    """Mean loss statistics on the holdout with gradients off (#96).
+
+    Same ``distill_loss`` terms as training; the split between a policy
+    drop and a value drop is the no-signal versus noise-overfit read.
+    """
+    if not samples:
+        return None
+    net.eval()
+    totals: Dict[str, float] = {}
+    n = 0
+    with torch.no_grad():
+        for start in range(0, len(samples), batch):
+            chunk = samples[start : start + batch]
+            steps = [net.distill(d) for d, _ in chunk]
+            _, stats = distill_loss(steps, [r for _, r in chunk], value_coef)
+            for k, v in stats.items():
+                totals[k] = totals.get(k, 0.0) + v
+            n += 1
+    net.train()
+    return {k: round(v / n, 5) for k, v in totals.items()}
+
+
 def save_checkpoint(
     net: ForgePointerNet,
     opt: torch.optim.Optimizer,
@@ -173,6 +229,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     torch.manual_seed(args.seed)
     games = load_selfplay(args.data, args.buffer_games)
     samples = flatten(games)
+    train_samples, holdout = carve_holdout(
+        samples, args.holdout_frac, args.seed + 1
+    )
     if args.init is not None:
         net, prev = load_pointer_net(str(args.init))
         parent_games = int((prev or {}).get("selfplay_games_total", 0))
@@ -186,7 +245,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     stats = train_epochs(
         net,
         opt,
-        samples,
+        train_samples,
         epochs=args.epochs,
         batch=args.batch,
         value_coef=args.value_coef,
@@ -200,10 +259,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "decisions": len(samples),
         "selfplay_games_total": parent_games + len(games),
         "epochs": args.epochs,
+        "holdout_frac": args.holdout_frac,
+        "holdout_examples": len(holdout),
         "secs": round(time.time() - t0, 1),
         "history": history,
         **{f"final_{k}": round(v, 5) for k, v in stats.items()},
     }
+    holdout_stats = holdout_loss(
+        net, holdout, batch=args.batch, value_coef=args.value_coef
+    )
+    if holdout_stats is not None:
+        meta["holdout"] = holdout_stats
     save_checkpoint(net, opt, args.out, meta)
     if args.onnx:
         from manamind.models.forge_pointer_onnx import export
@@ -231,6 +297,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--value-coef", type=float, default=1.0)
+    ap.add_argument(
+        "--holdout-frac",
+        type=float,
+        default=HOLDOUT_FRAC,
+        help="fraction of decisions held out of training and evaluated "
+        "afterward (0 disables; #96 diagnosis)",
+    )
     ap.add_argument(
         "--flush-value-head",
         action="store_true",
