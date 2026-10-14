@@ -456,6 +456,50 @@ def test_fork_flush_value_head_reaches_the_trainer(tmp_path: Path) -> None:
     assert "--flush-value-head" not in fakes.trains[0]
 
 
+def test_fork_round_inherits_kl_weighting(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--fork-on-plateau",
+            "--fork-c-scales",
+            "0.5",
+            "--kl-weighted",
+            "--kl-eps",
+            "0.01",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--kl-weighted" in fakes.trains[2]
+    assert fakes.trains[2][fakes.trains[2].index("--kl-eps") + 1] == "0.01"
+    # The plain main-round path carries the same flags.
+    assert "--kl-weighted" in fakes.trains[0]
+
+
+def test_fork_round_without_kl_weighting_stays_plain(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--fork-on-plateau",
+            "--fork-c-scales",
+            "0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--kl-weighted" not in fakes.trains[2]
+
+
 @pytest.mark.parametrize("value", ["", "0", "0.5,-1", "abc"])
 def test_fork_c_scales_must_be_positive(
     tmp_path: Path, value: str, capsys: pytest.CaptureFixture
