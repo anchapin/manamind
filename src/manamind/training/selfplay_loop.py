@@ -232,6 +232,15 @@ def expert_score(
     return float(result["score"])
 
 
+def kl_flags(args: argparse.Namespace) -> List[str]:
+    """KL-weighted epoch resampling flags (#96), shared by every round path."""
+    return (
+        ["--kl-weighted", "--kl-eps", str(args.kl_eps)]
+        if args.kl_weighted
+        else []
+    )
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -321,11 +330,7 @@ def run_round(
             str(args.seed + r),
             "--onnx",
         ]
-        + (
-            ["--kl-weighted", "--kl-eps", str(args.kl_eps)]
-            if args.kl_weighted
-            else []
-        )
+        + kl_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -502,6 +507,7 @@ def run_fork_round(
                 "--onnx",
             ]
             + (["--flush-value-head"] if args.fork_flush_value_head else [])
+            + kl_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
