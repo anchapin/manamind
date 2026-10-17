@@ -531,3 +531,16 @@ def test_c_scale_must_be_positive(tmp_path: Path, value: str) -> None:
                 value,
             ]
         )
+
+
+def test_expert_decisions_flag_records_both_sides(tmp_path: Path) -> None:
+    a = args(tmp_path, "--expert-games", "4", "--expert-decisions")
+    fakes = Fakes([0.5])
+    run(a, fakes.runner, fakes.trainer)
+    plays = [c for c in fakes.cmds if "scripts/selfplay-forge.ts" in c]
+    experts = [c for c in plays if "--opponent" in c]
+    assert experts
+    assert all(c[c.index("--expert-record") + 1] == "both" for c in experts)
+    assert all(
+        "--expert-record" not in c for c in plays if "--opponent" not in c
+    )

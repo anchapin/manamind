@@ -13,6 +13,7 @@ from manamind.models.forge_pointer import (
     load_pointer_net,
 )
 from manamind.training.train_selfplay import (
+    apply_expert_weight,
     build_parser,
     carve_holdout,
     flatten,
@@ -21,6 +22,7 @@ from manamind.training.train_selfplay import (
     load_selfplay,
     reset_value_head,
     run,
+    sample_source,
     train_epochs,
 )
 
@@ -293,3 +295,23 @@ def test_train_epochs_weighted_resamples_and_rejects_mismatch() -> None:
     assert a["used_frac"] == b["used_frac"] == 1.0
     with pytest.raises(ValueError):
         train_epochs(net, opt, samples, epochs=1, weights=[1.0])
+
+
+def test_sample_source_defaults_to_net() -> None:
+    assert sample_source({"source": "expert"}) == "expert"
+    assert sample_source({}) == "net"
+
+
+def test_apply_expert_weight_scales_expert_samples() -> None:
+    samples = [
+        ({"source": "net"}, 1.0),
+        ({"source": "expert"}, -1.0),
+        ({}, 0.0),
+    ]
+    assert apply_expert_weight(None, samples, 1.0) is None
+    assert apply_expert_weight(None, samples, 2.0) == [1.0, 2.0, 1.0]
+    assert apply_expert_weight([3.0, 3.0, 3.0], samples, 0.5) == [
+        3.0,
+        1.5,
+        3.0,
+    ]

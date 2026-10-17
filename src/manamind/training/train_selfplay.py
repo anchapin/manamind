@@ -196,6 +196,34 @@ def train_epochs(
     return means
 
 
+def apply_expert_weight(
+    weights: Optional[List[float]],
+    samples: Sequence[Tuple[Dict[str, Any], float]],
+    expert_weight: float,
+) -> Optional[List[float]]:
+    """Scale expert-source samples' training weights (#96).
+
+    With ``expert_weight == 1.0`` the weights pass through unchanged;
+    otherwise each expert-source sample's weight is multiplied by
+    ``expert_weight`` (a uniform 1.0 base when ``weights`` is None), so
+    Expert AI decisions can be trusted more or less than the net's own.
+    """
+    if expert_weight == 1.0:
+        return weights
+    factors = [
+        expert_weight if sample_source(d) == "expert" else 1.0
+        for d, _ in samples
+    ]
+    if weights is None:
+        return factors
+    return [w * f for w, f in zip(weights, factors)]
+
+
+def sample_source(decision: Dict[str, Any]) -> str:
+    """Which brain produced a decision: the net (default) or the Expert."""
+    return str(decision.get("source", "net"))
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -293,6 +321,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     weights: Optional[List[float]] = None
     if args.kl_weighted:
         weights = kl_weights(net, train_samples, eps=args.kl_eps)
+    weights = apply_expert_weight(
+        weights, train_samples, args.expert_policy_weight
+    )
     t0 = time.time()
     history: List[Dict[str, Any]] = []
     stats = train_epochs(
@@ -317,6 +348,10 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "holdout_examples": len(holdout),
         "kl_weighted": args.kl_weighted,
         "kl_eps": args.kl_eps if args.kl_weighted else None,
+        "expert_policy_weight": args.expert_policy_weight,
+        "expert_samples": sum(
+            1 for d, _ in train_samples if sample_source(d) == "expert"
+        ),
         "secs": round(time.time() - t0, 1),
         "history": history,
         **{f"final_{k}": round(v, 5) for k, v in stats.items()},
@@ -326,6 +361,14 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     )
     if holdout_stats is not None:
         meta["holdout"] = holdout_stats
+    holdout_expert = [s for s in holdout if sample_source(s[0]) == "expert"]
+    if holdout_expert:
+        meta["holdout_expert"] = holdout_loss(
+            net,
+            holdout_expert,
+            batch=args.batch,
+            value_coef=args.value_coef,
+        )
     save_checkpoint(net, opt, args.out, meta)
     if args.onnx:
         from manamind.models.forge_pointer_onnx import export
@@ -371,6 +414,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.01,
         help="eps floor in the KL weighting (with --kl-weighted)",
+    )
+    ap.add_argument(
+        "--expert-policy-weight",
+        type=float,
+        default=1.0,
+        help="policy-loss weight multiplier for source=='expert' decisions "
+        "(expert-decision recording, manamind#96); 1.0 disables",
     )
     ap.add_argument(
         "--flush-value-head",
