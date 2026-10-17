@@ -309,6 +309,7 @@ def run_round(
                 "--out",
                 str(buffer / f"round_{r:04d}_expert.jsonl.gz"),
             ]
+            + (["--expert-record", "both"] if args.expert_decisions else [])
             + decks
             + pick
             + c_scale,
@@ -485,6 +486,11 @@ def run_fork_round(
                     "--out",
                     str(buffer / f"round_{r:04d}_fork{k}_expert.jsonl.gz"),
                 ]
+                + (
+                    ["--expert-record", "both"]
+                    if args.expert_decisions
+                    else []
+                )
                 + decks
                 + pick
                 + fork_c,
@@ -656,6 +662,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--buffer-games", type=int, default=BUFFER_GAMES)
     ap.add_argument("--flat-rounds", type=int, default=3)
+    ap.add_argument(
+        "--expert-decisions",
+        action="store_true",
+        help="also record the Expert AI's decisions in Expert games "
+        "(passes --expert-record both; manamind#96)",
+    )
     ap.add_argument(
         "--anchor-games",
         type=int,
