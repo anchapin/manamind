@@ -241,6 +241,13 @@ def kl_flags(args: argparse.Namespace) -> List[str]:
     )
 
 
+def expert_weight_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --expert-policy-weight to train_selfplay (#96)."""
+    if args.expert_policy_weight == 1.0:
+        return []
+    return ["--expert-policy-weight", str(args.expert_policy_weight)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -332,6 +339,7 @@ def run_round(
             "--onnx",
         ]
         + kl_flags(args)
+        + expert_weight_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -514,6 +522,7 @@ def run_fork_round(
             ]
             + (["--flush-value-head"] if args.fork_flush_value_head else [])
             + kl_flags(args)
+            + expert_weight_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
@@ -667,6 +676,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also record the Expert AI's decisions in Expert games "
         "(passes --expert-record both; manamind#96)",
+    )
+    ap.add_argument(
+        "--expert-policy-weight",
+        type=float,
+        default=1.0,
+        help="forward --expert-policy-weight to train_selfplay: relative "
+        "weight on expert-buffer samples (manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",

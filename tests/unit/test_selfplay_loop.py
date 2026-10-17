@@ -544,3 +544,35 @@ def test_expert_decisions_flag_records_both_sides(tmp_path: Path) -> None:
     assert all(
         "--expert-record" not in c for c in plays if "--opponent" not in c
     )
+
+
+def test_expert_policy_weight_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--expert-policy-weight",
+            "2.0",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--expert-policy-weight" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--expert-policy-weight") + 1]
+        == "2.0"
+    )
+
+
+def test_expert_policy_weight_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--expert-policy-weight" not in fakes.trains[0]
