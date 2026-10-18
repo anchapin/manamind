@@ -25,6 +25,11 @@ only the net's decisions recorded) into
 ``<run>/buffer/round_NNNN_expert.jsonl.gz``, so training keeps seeing an
 outside opponent instead of only its own lineage.
 
+Imitation phase (``--imitation-epochs N``, off at 0, #96): after each
+round's main training phase the trainer runs ``N`` extra epochs on the
+expert-source rows only (uniform weights), so the gate sees a candidate
+that has just taken a dedicated pass at imitating the Expert.
+
 Decks (``--deck-a`` / ``--deck-b``): passed to the self-play, Expert-game
 and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
 Mono-Green Landfall decks the yardsticks measure; left unset, the scripts
@@ -248,6 +253,13 @@ def expert_weight_flags(args: argparse.Namespace) -> List[str]:
     return ["--expert-policy-weight", str(args.expert_policy_weight)]
 
 
+def imitation_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --imitation-epochs to train_selfplay (#96)."""
+    if args.imitation_epochs == 0:
+        return []
+    return ["--imitation-epochs", str(args.imitation_epochs)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -340,6 +352,7 @@ def run_round(
         ]
         + kl_flags(args)
         + expert_weight_flags(args)
+        + imitation_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -523,6 +536,7 @@ def run_fork_round(
             + (["--flush-value-head"] if args.fork_flush_value_head else [])
             + kl_flags(args)
             + expert_weight_flags(args)
+            + imitation_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
@@ -683,6 +697,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="forward --expert-policy-weight to train_selfplay: relative "
         "weight on expert-buffer samples (manamind#96)",
+    )
+    ap.add_argument(
+        "--imitation-epochs",
+        type=int,
+        default=0,
+        help="forward --imitation-epochs to train_selfplay: extra "
+        "expert-only imitation epochs after each round's main phase "
+        "(manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",
