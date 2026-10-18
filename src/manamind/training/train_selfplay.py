@@ -356,16 +356,54 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "history": history,
         **{f"final_{k}": round(v, 5) for k, v in stats.items()},
     }
+    expert_holdout = [s for s in holdout if sample_source(s[0]) == "expert"]
+    imitation: Optional[Dict[str, Any]] = None
+    if args.imitation_epochs > 0:
+        expert_train = [
+            (d, r) for d, r in train_samples if sample_source(d) == "expert"
+        ]
+        if not expert_train:
+            imitation = {
+                "epochs": args.imitation_epochs,
+                "skipped": "no expert rows",
+            }
+        else:
+            imitation = {
+                "epochs": args.imitation_epochs,
+                "samples": len(expert_train),
+            }
+            if expert_holdout:
+                imitation["holdout_expert_pre"] = holdout_loss(
+                    net,
+                    expert_holdout,
+                    batch=args.batch,
+                    value_coef=args.value_coef,
+                )
+            im_history: List[Dict[str, Any]] = []
+            im_stats = train_epochs(
+                net,
+                opt,
+                expert_train,
+                epochs=args.imitation_epochs,
+                batch=args.batch,
+                value_coef=args.value_coef,
+                seed=args.seed + 9000,
+                log=im_history,
+            )
+            imitation["history"] = im_history
+            imitation.update(
+                {f"final_{k}": round(v, 5) for k, v in im_stats.items()}
+            )
+        meta["imitation"] = imitation
     holdout_stats = holdout_loss(
         net, holdout, batch=args.batch, value_coef=args.value_coef
     )
     if holdout_stats is not None:
         meta["holdout"] = holdout_stats
-    holdout_expert = [s for s in holdout if sample_source(s[0]) == "expert"]
-    if holdout_expert:
+    if expert_holdout:
         meta["holdout_expert"] = holdout_loss(
             net,
-            holdout_expert,
+            expert_holdout,
             batch=args.batch,
             value_coef=args.value_coef,
         )
@@ -421,6 +459,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="policy-loss weight multiplier for source=='expert' decisions "
         "(expert-decision recording, manamind#96); 1.0 disables",
+    )
+    ap.add_argument(
+        "--imitation-epochs",
+        type=int,
+        default=0,
+        help="after the main phase, run N extra epochs on expert-source "
+        "rows only (dedicated imitation pass, manamind#96); 0 disables",
     )
     ap.add_argument(
         "--flush-value-head",

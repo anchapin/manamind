@@ -315,3 +315,78 @@ def test_apply_expert_weight_scales_expert_samples() -> None:
         1.5,
         3.0,
     ]
+
+
+def _expert_game(seed: int) -> dict:
+    return {
+        "seed": seed,
+        "decisions": [{**PRIORITY, "source": "expert"}],
+        "returns": [1.0],
+        "winner": 0,
+    }
+
+
+def test_imitation_phase_trains_on_expert_rows_only(tmp_path: Path) -> None:
+    rows = [json.dumps(_expert_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_game(s)) + "\n" for s in range(8)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0.25",
+                "--imitation-epochs",
+                "2",
+            ]
+        )
+    )
+    samples = flatten(load_selfplay([data], 20000))
+    train, holdout = carve_holdout(samples, 0.25, 1)
+    n_train = sum(1 for d, _ in train if sample_source(d) == "expert")
+    n_hold = sum(1 for d, _ in holdout if sample_source(d) == "expert")
+    im = meta["imitation"]
+    assert im["epochs"] == 2 and im["samples"] == n_train
+    assert "skipped" not in im
+    assert meta["expert_samples"] == n_train
+    if n_hold:
+        assert im["holdout_expert_pre"] is not None
+        assert set(meta["holdout_expert"]) == {
+            "loss",
+            "policy",
+            "value",
+            "used_frac",
+        }
+    assert len(im["history"]) == 2
+
+
+def test_imitation_phase_skips_without_expert_rows(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(json.dumps(_game(s)) + "\n" for s in range(3)))
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "r1"),
+                "--imitation-epochs",
+                "2",
+            ]
+        )
+    )
+    assert meta["imitation"] == {
+        "epochs": 2,
+        "skipped": "no expert rows",
+    }
+    plain = run(
+        build_parser().parse_args(
+            ["--data", str(data), "--out", str(tmp_path / "r2")]
+        )
+    )
+    assert "imitation" not in plain
