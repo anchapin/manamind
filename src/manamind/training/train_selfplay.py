@@ -379,6 +379,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                     batch=args.batch,
                     value_coef=args.value_coef,
                 )
+            imitation["lr_scale"] = args.imitation_lr_scale
+            base_lr = opt.param_groups[0]["lr"]
+            if args.imitation_lr_scale != 1.0:
+                for group in opt.param_groups:
+                    group["lr"] = base_lr * args.imitation_lr_scale
             im_history: List[Dict[str, Any]] = []
             im_stats = train_epochs(
                 net,
@@ -390,6 +395,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                 seed=args.seed + 9000,
                 log=im_history,
             )
+            if args.imitation_lr_scale != 1.0:
+                for group in opt.param_groups:
+                    group["lr"] = base_lr
             imitation["history"] = im_history
             imitation.update(
                 {f"final_{k}": round(v, 5) for k, v in im_stats.items()}
@@ -466,6 +474,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="after the main phase, run N extra epochs on expert-source "
         "rows only (dedicated imitation pass, manamind#96); 0 disables",
+    )
+    ap.add_argument(
+        "--imitation-lr-scale",
+        type=float,
+        default=1.0,
+        help="learning-rate multiplier for the imitation phase "
+        "(manamind#96); 1.0 uses the main phase's lr unchanged",
     )
     ap.add_argument(
         "--flush-value-head",

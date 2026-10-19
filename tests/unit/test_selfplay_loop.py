@@ -607,3 +607,35 @@ def test_imitation_epochs_default_is_omitted(tmp_path: Path) -> None:
         fakes.trainer,
     )
     assert "--imitation-epochs" not in fakes.trains[0]
+
+
+def test_imitation_lr_scale_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--imitation-lr-scale",
+            "0.3",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--imitation-lr-scale" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--imitation-lr-scale") + 1]
+        == "0.3"
+    )
+
+
+def test_imitation_lr_scale_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--imitation-lr-scale" not in fakes.trains[0]

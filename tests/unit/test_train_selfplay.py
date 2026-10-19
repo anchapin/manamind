@@ -390,3 +390,52 @@ def test_imitation_phase_skips_without_expert_rows(tmp_path: Path) -> None:
         )
     )
     assert "imitation" not in plain
+
+
+def test_imitation_lr_scale_recorded_and_restored(tmp_path: Path) -> None:
+    rows = [json.dumps(_expert_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_game(s)) + "\n" for s in range(8)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "r1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0.25",
+                "--imitation-epochs",
+                "2",
+                "--imitation-lr-scale",
+                "0.3",
+            ]
+        )
+    )
+    assert meta["imitation"]["lr_scale"] == 0.3
+    ckpt = torch.load(out / "last.pt", weights_only=False)
+    assert ckpt["optimizer"]["param_groups"][0]["lr"] == pytest.approx(3e-4)
+
+
+def test_imitation_lr_scale_default_is_one(tmp_path: Path) -> None:
+    rows = [json.dumps(_expert_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_game(s)) + "\n" for s in range(8)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "r2"),
+                "--holdout-frac",
+                "0.25",
+                "--imitation-epochs",
+                "2",
+            ]
+        )
+    )
+    assert meta["imitation"]["lr_scale"] == 1.0

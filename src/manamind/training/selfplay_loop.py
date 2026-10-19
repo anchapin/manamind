@@ -29,6 +29,8 @@ Imitation phase (``--imitation-epochs N``, off at 0, #96): after each
 round's main training phase the trainer runs ``N`` extra epochs on the
 expert-source rows only (uniform weights), so the gate sees a candidate
 that has just taken a dedicated pass at imitating the Expert.
+``--imitation-lr-scale`` (default 1) scales the imitation phase's learning
+rate: a gentler pass that gives less of the self-play fit back.
 
 Decks (``--deck-a`` / ``--deck-b``): passed to the self-play, Expert-game
 and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
@@ -260,6 +262,13 @@ def imitation_flags(args: argparse.Namespace) -> List[str]:
     return ["--imitation-epochs", str(args.imitation_epochs)]
 
 
+def imitation_lr_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --imitation-lr-scale to train_selfplay (#96)."""
+    if args.imitation_lr_scale == 1.0:
+        return []
+    return ["--imitation-lr-scale", str(args.imitation_lr_scale)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -353,6 +362,7 @@ def run_round(
         + kl_flags(args)
         + expert_weight_flags(args)
         + imitation_flags(args)
+        + imitation_lr_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -537,6 +547,7 @@ def run_fork_round(
             + kl_flags(args)
             + expert_weight_flags(args)
             + imitation_flags(args)
+            + imitation_lr_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
@@ -705,6 +716,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="forward --imitation-epochs to train_selfplay: extra "
         "expert-only imitation epochs after each round's main phase "
         "(manamind#96)",
+    )
+    ap.add_argument(
+        "--imitation-lr-scale",
+        type=float,
+        default=1.0,
+        help="forward --imitation-lr-scale to train_selfplay: learning-rate "
+        "multiplier for the imitation phase (manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",
