@@ -254,10 +254,13 @@ def expert_weight_flags(args: argparse.Namespace) -> List[str]:
 
 
 def imitation_flags(args: argparse.Namespace) -> List[str]:
-    """Forward --imitation-epochs to train_selfplay (#96)."""
+    """Forward imitation flags to train_selfplay (manamind#96)."""
     if args.imitation_epochs == 0:
         return []
-    return ["--imitation-epochs", str(args.imitation_epochs)]
+    flags = ["--imitation-epochs", str(args.imitation_epochs)]
+    if args.imitation_weight != 1.0:
+        flags += ["--imitation-weight", str(args.imitation_weight)]
+    return flags
 
 
 def run_round(
@@ -705,6 +708,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="forward --imitation-epochs to train_selfplay: extra "
         "expert-only imitation epochs after each round's main phase "
         "(manamind#96)",
+    )
+    ap.add_argument(
+        "--imitation-weight",
+        type=float,
+        default=1.0,
+        help="forward --imitation-weight to train_selfplay: optimizer-LR "
+        "multiplier for the imitation epochs (manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",

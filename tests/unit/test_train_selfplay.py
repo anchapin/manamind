@@ -365,6 +365,55 @@ def test_imitation_phase_trains_on_expert_rows_only(tmp_path: Path) -> None:
     assert len(im["history"]) == 2
 
 
+def test_imitation_phase_records_loss_weight(tmp_path: Path) -> None:
+    rows = [json.dumps(_expert_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_game(s)) + "\n" for s in range(8)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "rw"),
+                "--holdout-frac",
+                "0.25",
+                "--imitation-epochs",
+                "2",
+                "--imitation-weight",
+                "0.5",
+            ]
+        )
+    )
+    im = meta["imitation"]
+    assert im["weight"] == 0.5 and im["epochs"] == 2
+    assert "skipped" not in im
+    assert len(im["history"]) == 2
+
+
+def test_imitation_phase_default_weight_is_one(tmp_path: Path) -> None:
+    rows = [json.dumps(_expert_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_game(s)) + "\n" for s in range(8)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "rd"),
+                "--holdout-frac",
+                "0.25",
+                "--imitation-epochs",
+                "1",
+            ]
+        )
+    )
+    assert meta["imitation"]["weight"] == 1.0
+
+
 def test_imitation_phase_skips_without_expert_rows(tmp_path: Path) -> None:
     data = tmp_path / "round0.jsonl"
     data.write_text("".join(json.dumps(_game(s)) + "\n" for s in range(3)))

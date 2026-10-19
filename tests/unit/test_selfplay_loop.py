@@ -607,3 +607,45 @@ def test_imitation_epochs_default_is_omitted(tmp_path: Path) -> None:
         fakes.trainer,
     )
     assert "--imitation-epochs" not in fakes.trains[0]
+
+
+def test_imitation_weight_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--imitation-epochs",
+            "2",
+            "--imitation-weight",
+            "0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--imitation-weight" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--imitation-weight") + 1]
+        == "0.5"
+    )
+
+
+def test_imitation_weight_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--imitation-epochs",
+            "2",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--imitation-weight" not in fakes.trains[0]

@@ -371,6 +371,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             imitation = {
                 "epochs": args.imitation_epochs,
                 "samples": len(expert_train),
+                "weight": args.imitation_weight,
             }
             if expert_holdout:
                 imitation["holdout_expert_pre"] = holdout_loss(
@@ -380,16 +381,25 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                     value_coef=args.value_coef,
                 )
             im_history: List[Dict[str, Any]] = []
-            im_stats = train_epochs(
-                net,
-                opt,
-                expert_train,
-                epochs=args.imitation_epochs,
-                batch=args.batch,
-                value_coef=args.value_coef,
-                seed=args.seed + 9000,
-                log=im_history,
-            )
+            saved_lrs = [g["lr"] for g in opt.param_groups]
+            try:
+                if args.imitation_weight != 1.0:
+                    for g in opt.param_groups:
+                        g["lr"] = g["lr"] * args.imitation_weight
+                im_stats = train_epochs(
+                    net,
+                    opt,
+                    expert_train,
+                    epochs=args.imitation_epochs,
+                    batch=args.batch,
+                    value_coef=args.value_coef,
+                    seed=args.seed + 9000,
+                    log=im_history,
+                )
+            finally:
+                if args.imitation_weight != 1.0:
+                    for g, lr in zip(opt.param_groups, saved_lrs):
+                        g["lr"] = lr
             imitation["history"] = im_history
             imitation.update(
                 {f"final_{k}": round(v, 5) for k, v in im_stats.items()}
@@ -466,6 +476,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="after the main phase, run N extra epochs on expert-source "
         "rows only (dedicated imitation pass, manamind#96); 0 disables",
+    )
+    ap.add_argument(
+        "--imitation-weight",
+        type=float,
+        default=1.0,
+        help="optimizer-LR multiplier during the imitation epochs "
+        "(manamind#96); the loss route is a near no-op under Adam, so "
+        "the knob scales lr instead; 1.0 is the unscaled default",
     )
     ap.add_argument(
         "--flush-value-head",
