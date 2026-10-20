@@ -269,6 +269,13 @@ def imitation_lr_flags(args: argparse.Namespace) -> List[str]:
     return ["--imitation-lr-scale", str(args.imitation_lr_scale)]
 
 
+def value_coef_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-coef to train_selfplay (#96)."""
+    if args.value_coef == 1.0:
+        return []
+    return ["--value-coef", str(args.value_coef)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -363,6 +370,7 @@ def run_round(
         + expert_weight_flags(args)
         + imitation_flags(args)
         + imitation_lr_flags(args)
+        + value_coef_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -548,6 +556,7 @@ def run_fork_round(
             + expert_weight_flags(args)
             + imitation_flags(args)
             + imitation_lr_flags(args)
+            + value_coef_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
@@ -723,6 +732,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="forward --imitation-lr-scale to train_selfplay: learning-rate "
         "multiplier for the imitation phase (manamind#96)",
+    )
+    ap.add_argument(
+        "--value-coef",
+        type=float,
+        default=1.0,
+        help="forward --value-coef to train_selfplay: relative "
+        "weight on the value loss (manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",

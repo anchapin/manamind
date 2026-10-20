@@ -639,3 +639,32 @@ def test_imitation_lr_scale_default_is_omitted(tmp_path: Path) -> None:
         fakes.trainer,
     )
     assert "--imitation-lr-scale" not in fakes.trains[0]
+
+
+def test_value_coef_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-coef",
+            "4.0",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-coef" in fakes.trains[0]
+    assert fakes.trains[0][fakes.trains[0].index("--value-coef") + 1] == "4.0"
+
+
+def test_value_coef_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-coef" not in fakes.trains[0]
