@@ -737,7 +737,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--value-coef",
         type=float,
         default=1.0,
-        help="forward --value-coef to train_selfplay: relative weight on the value loss (manamind#96)",
+        help="forward --value-coef to train_selfplay: relative "
+        "weight on the value loss (manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",
