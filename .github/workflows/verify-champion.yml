@@ -1,0 +1,237 @@
+# Champion verification: head-to-head + Expert-anchor reads for two trained
+# checkpoints (manamind#96). Runs on Alex's home PC (self-hosted, label
+# "manamind-train") because the checkpoints live there under ~/manamind-runs.
+# Manual dispatch only. Read-only over the run dirs: plays the two ONNX
+# checkpoints against each other (scripts/gate-forge.ts, seat and deck
+# alternation built in) and scores BOTH against the Planar Nexus Expert AI
+# (scripts/yardstick-pn.ts, the loop's fixed anchor seed), then posts the
+# table to an issue. Writes only under results/.
+name: Champion verification on home PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "manamind branch or commit"
+        required: true
+        default: "main"
+      pn_ref:
+        description: "planar-nexus branch or commit"
+        required: true
+        default: "main"
+      a_ckpt:
+        description: "Checkpoint A ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_mix3/rounds/0003/forge_pointer.onnx"
+      b_ckpt:
+        description: "Checkpoint B ONNX under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_imit4/rounds/0002/forge_pointer.onnx"
+      gate_games:
+        description: "Head-to-head games (even; seats and decks swap)"
+        required: true
+        default: "800"
+      anchor_games:
+        description: "Expert AI games per checkpoint (even)"
+        required: true
+        default: "400"
+      sims:
+        description: "Search simulations per move"
+        required: true
+        default: "32"
+      decks:
+        description: "Head-to-head deck pair, e.g. red,green (blank = simulator defaults)"
+        required: true
+        default: "red,green"
+      pick:
+        description: "Head-to-head move pick"
+        required: true
+        default: "gumbel"
+      issue:
+        description: "Issue to post the table to (blank to skip)"
+        required: false
+        default: "96"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: home-pc-verify-champion
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 720
+    env:
+      A_CKPT: ${{ github.event.inputs.a_ckpt }}
+      B_CKPT: ${{ github.event.inputs.b_ckpt }}
+      GATE_GAMES: ${{ github.event.inputs.gate_games }}
+      ANCHOR_GAMES: ${{ github.event.inputs.anchor_games }}
+      SIMS: ${{ github.event.inputs.sims }}
+      DECKS: ${{ github.event.inputs.decks }}
+      PICK: ${{ github.event.inputs.pick }}
+      ISSUE: ${{ github.event.inputs.issue }}
+      REF: ${{ github.event.inputs.ref }}
+      PN_REF: ${{ github.event.inputs.pn_ref }}
+      ANCHOR_SEED: "2000001" # the loop's anchor seed, so reads stay comparable
+      H2H_SEED: "7000001" # fresh band, clear of the loop's gate band
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ github.event.inputs.pn_ref }}
+          path: pn
+
+      - name: Validate inputs
+        run: |
+          for v in "$A_CKPT" "$B_CKPT"; do
+            [[ "$v" =~ ^[A-Za-z0-9._/-]+\.onnx$ ]] || { echo "bad ckpt: $v"; exit 1; }
+            [[ "$v" != *..* ]] || { echo "ckpt must stay under ~/manamind-runs"; exit 1; }
+          done
+          [[ "$A_CKPT" != "$B_CKPT" ]] || { echo "a_ckpt and b_ckpt must differ"; exit 1; }
+          [[ "$GATE_GAMES" =~ ^[0-9]+$ && "$GATE_GAMES" -gt 0 ]] || { echo "bad gate_games"; exit 1; }
+          [[ "$ANCHOR_GAMES" =~ ^[0-9]+$ && "$ANCHOR_GAMES" -gt 0 && $((ANCHOR_GAMES % 2)) -eq 0 ]] || { echo "anchor_games must be a positive even number"; exit 1; }
+          [[ "$SIMS" =~ ^[0-9]+$ && "$SIMS" -gt 0 ]] || { echo "bad sims"; exit 1; }
+          [[ "$PICK" =~ ^(greedy|sample|gumbel)$ ]] || { echo "bad pick"; exit 1; }
+          [[ -z "$DECKS" || "$DECKS" =~ ^[A-Za-z0-9_-]+,[A-Za-z0-9_-]+$ ]] || { echo "bad decks"; exit 1; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Planar Nexus card-script index
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
+
+      - name: Verify checkpoints exist
+        run: ls -la "$HOME/manamind-runs/$A_CKPT" "$HOME/manamind-runs/$B_CKPT"
+
+      - name: Head-to-head and Expert-anchor reads
+        shell: bash
+        run: |
+          set -o pipefail
+          OUT="$GITHUB_WORKSPACE/results/verify_${GITHUB_RUN_ID}"
+          mkdir -p "$OUT"
+          RUNS="$HOME/manamind-runs"
+          DECK_ARGS=()
+          if [ -n "$DECKS" ]; then
+            IFS=',' read -r DA DB <<< "$DECKS"
+            DECK_ARGS=(--deck-a "$DA" --deck-b "$DB")
+          fi
+          ( cd pn && npx tsx scripts/gate-forge.ts \
+              --candidate "$RUNS/$A_CKPT" \
+              --baseline "$RUNS/$B_CKPT" \
+              --games "$GATE_GAMES" --seed "$H2H_SEED" \
+              --sims "$SIMS" --threshold 0.55 --pick "$PICK" \
+              --out "$OUT/h2h.json" "${DECK_ARGS[@]}" ) 2>&1 \
+            | grep -v '^\(DEBUG\|INFO\)' | tail -n 300 | tee "$OUT/h2h.log"
+          [ -f "$OUT/h2h.json" ] || { echo "head-to-head produced no result"; exit 1; }
+          for pair in "A:$A_CKPT" "B:$B_CKPT"; do
+            tag="${pair%%:*}"; ck="${pair#*:}"
+            # yardstick-pn.ts exits 1 when some games errored but still
+            # writes its results; a missing file is a real failure.
+            ( cd pn && npx tsx scripts/yardstick-pn.ts \
+                --agent model --model "$RUNS/$ck" \
+                --games "$ANCHOR_GAMES" --seed "$ANCHOR_SEED" --sims "$SIMS" \
+                --out "$OUT/anchor_${tag}.json" ) 2>&1 \
+              | grep -v '^\(DEBUG\|INFO\)' | tail -n 300 | tee "$OUT/anchor_${tag}.log"
+            [ -f "$OUT/anchor_${tag}.json" ] || { echo "anchor read for $tag produced no result"; exit 1; }
+          done
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Build table and post
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          out = os.environ.get("OUT", "")
+          a_ckpt = os.environ.get("A_CKPT", "A")
+          b_ckpt = os.environ.get("B_CKPT", "B")
+          if not out or not os.path.isdir(out):
+              raise SystemExit(0)
+
+          def load(name):
+              p = os.path.join(out, name)
+              if not os.path.exists(p):
+                  return None
+              with open(p) as f:
+                  return json.load(f)
+
+          def fmt(r, label):
+              if not r:
+                  return f"| {label} | _no result_ | |"
+              score = r.get("score")
+              ci = r.get("ci95") or r.get("ci")
+              games = r.get("games")
+              wld = "-".join(
+                  str(r.get(k, "?")) for k in ("wins", "losses", "draws")
+              )
+              ci_s = (
+                  f" [{ci[0]:.3f}, {ci[1]:.3f}]"
+                  if ci and len(ci) >= 2
+                  else ""
+              )
+              return f"| {label} | {score:.3f}{ci_s} | {wld} / {games} |"
+
+          lines = [
+              "**Champion verification**",
+              "",
+              f"A: `{a_ckpt}` vs B: `{b_ckpt}`",
+              "",
+              "| Measure | Score | W-L-D / games |",
+              "|---|---:|---:|",
+          ]
+          lines.append(
+              fmt(load("h2h.json"), "A vs B head-to-head (A's win rate)")
+          )
+          lines.append(fmt(load("anchor_A.json"), "A vs Expert AI"))
+          lines.append(fmt(load("anchor_B.json"), "B vs Expert AI"))
+          lines += ["", "<details><summary>Raw results</summary>", ""]
+          for name in ("h2h.json", "anchor_A.json", "anchor_B.json"):
+              r = load(name)
+              if r:
+                  lines += [f"```json", name, json.dumps(r, indent=2), "```", ""]
+          lines += ["</details>", ""]
+          lines.append(
+              f"_[Run]({os.environ.get('GITHUB_SERVER_URL', '')}/"
+              f"{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/"
+              f"{os.environ.get('GITHUB_RUN_ID', '')}), manamind "
+              f"`{os.environ.get('REF', '')}`, planar-nexus "
+              f"`{os.environ.get('PN_REF', '')}`._"
+          )
+          with open(os.path.join(out, "comment.md"), "w") as f:
+              f.write("\n".join(lines))
+          PY
+          cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+          ISSUE="${ISSUE:-}"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --body-file "$OUT/comment.md"
+          fi
+
+      - name: Upload results (no checkpoints)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-champion-${{ github.run_id }}
+          path: results/verify_*
