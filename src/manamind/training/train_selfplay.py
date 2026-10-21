@@ -354,7 +354,7 @@ def holdout_loss(
                 vturn[b] = vturn.get(b, 0.0) + err
                 nturn[b] = nturn.get(b, 0) + 1
     net.train()
-    out = {k: round(v / n, 5) for k, v in totals.items()}
+    out: Dict[str, Any] = {k: round(v / n, 5) for k, v in totals.items()}
     order = (*VALUE_TURN_BUCKETS, "unknown")
     if nturn:
         out["value_by_turn"] = {
