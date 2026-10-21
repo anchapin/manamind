@@ -20,6 +20,7 @@ from manamind.training.train_selfplay import (
     holdout_loss,
     kl_weights,
     load_selfplay,
+    mix_expert_rows,
     reset_value_head,
     run,
     sample_source,
@@ -134,6 +135,75 @@ def test_replay_buffer_keeps_newest_games(tmp_path: Path) -> None:
     bad.write_text(json.dumps({"decisions": [PRIORITY], "returns": []}))
     with pytest.raises(ValueError):
         load_selfplay([bad])
+
+
+def test_mix_expert_rows_replays_to_target_share() -> None:
+    samples = [({"source": "net"}, 1.0)] * 70 + [
+        ({"source": "expert"}, -1.0)
+    ] * 10
+    mixed, fill, meta = mix_expert_rows(samples, 0.3)
+    assert len(mixed) == 100 and len(fill) == 20
+    share = sum(1 for d, _ in mixed if sample_source(d) == "expert") / len(
+        mixed
+    )
+    assert share == pytest.approx(0.3)
+    assert meta["expert_rows_base"] == 10
+    assert meta["expert_rows_added"] == 20
+    assert meta["expert_rows_final"] == 30
+
+
+def test_mix_expert_rows_passthrough_at_default() -> None:
+    samples = [({"source": "net"}, 1.0)] * 3
+    mixed, fill, meta = mix_expert_rows(samples, 0.0)
+    assert mixed is samples and fill == [] and meta == {}
+
+
+def test_mix_expert_rows_skips_without_expert_rows() -> None:
+    samples = [({"source": "net"}, 1.0)] * 3
+    mixed, fill, meta = mix_expert_rows(samples, 0.3)
+    assert mixed == samples and fill == []
+    assert meta["expert_mix_skipped"] == "no expert rows"
+
+
+def test_mix_expert_rows_no_add_at_target_share() -> None:
+    samples = [({"source": "net"}, 1.0)] * 70 + [
+        ({"source": "expert"}, -1.0)
+    ] * 30
+    mixed, fill, meta = mix_expert_rows(samples, 0.3)
+    assert len(mixed) == 100 and fill == []
+    assert meta["expert_rows_added"] == 0
+
+
+def test_mix_expert_rows_rejects_full_share() -> None:
+    with pytest.raises(ValueError):
+        mix_expert_rows([({"source": "net"}, 1.0)], 1.0)
+
+
+def test_run_mixes_expert_rows_into_train_pool(tmp_path: Path) -> None:
+    rows = [json.dumps(_game(s)) + "\n" for s in range(8)]
+    rows += [json.dumps(_expert_game(s)) + "\n" for s in range(2)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--expert-mix-frac",
+                "0.5",
+            ]
+        )
+    )
+    assert meta["decisions"] == 26
+    assert meta["expert_mix_frac"] == 0.5
+    assert meta["expert_rows_base"] == 2
+    assert meta["expert_rows_added"] == 22
+    assert meta["expert_samples"] == 24
 
 
 def test_cli_writes_loadable_checkpoint(tmp_path: Path) -> None:
