@@ -276,9 +276,37 @@ def test_holdout_loss_evaluates_without_gradients() -> None:
     samples = [({**PRIORITY, "t": "priority"}, 1.0) for _ in range(4)]
     stats = holdout_loss(net, samples, batch=2)
     assert stats is not None
-    assert set(stats) == {"loss", "policy", "value", "used_frac"}
+    assert set(stats) == {
+        "loss",
+        "policy",
+        "value",
+        "used_frac",
+        "value_by_turn",
+        "value_by_turn_n",
+    }
     assert stats["used_frac"] == 1.0
+    assert stats["value_by_turn_n"] == {"1-3": 4}
+    assert abs(stats["value_by_turn"]["1-3"] - stats["value"]) < 1e-4
     assert holdout_loss(net, []) is None
+
+
+def test_holdout_loss_buckets_value_error_by_turn() -> None:
+    net = ForgePointerNet()
+    samples = [
+        ({**PRIORITY, "t": "priority", "turn": n}, 1.0) for n in (1, 5, 20)
+    ] + [({**PRIORITY, "t": "priority", "turn": 0}, 1.0)]
+    stats = holdout_loss(net, samples, batch=4)
+    assert stats is not None
+    assert set(stats["value_by_turn"]) == {"1-3", "4-8", "17+", "unknown"}
+    assert stats["value_by_turn_n"] == {
+        "1-3": 1,
+        "4-8": 1,
+        "17+": 1,
+        "unknown": 1,
+    }
+    assert (
+        abs(sum(stats["value_by_turn"].values()) / 4 - stats["value"]) < 1e-4
+    )
 
 
 def test_run_carves_holdout_and_records_it(tmp_path: Path) -> None:
@@ -298,7 +326,24 @@ def test_run_carves_holdout_and_records_it(tmp_path: Path) -> None:
         )
     )
     assert meta["holdout_examples"] > 0
-    assert set(meta["holdout"]) == {"loss", "policy", "value", "used_frac"}
+    assert set(meta["holdout"]) == {
+        "loss",
+        "policy",
+        "value",
+        "used_frac",
+        "value_by_turn",
+        "value_by_turn_n",
+    }
+    assert set(meta["holdout"]["value_by_turn"]) <= {
+        "1-3",
+        "4-8",
+        "9-16",
+        "17+",
+        "unknown",
+    }
+    assert sum(meta["holdout"]["value_by_turn_n"].values()) == (
+        meta["holdout_examples"]
+    )
     assert (out / "selfplay_train.json").exists()
     meta2 = run(
         build_parser().parse_args(
@@ -431,6 +476,8 @@ def test_imitation_phase_trains_on_expert_rows_only(tmp_path: Path) -> None:
             "policy",
             "value",
             "used_frac",
+            "value_by_turn",
+            "value_by_turn_n",
         }
     assert len(im["history"]) == 2
 

@@ -291,21 +291,53 @@ def carve_holdout(
     )
 
 
+VALUE_TURN_BUCKETS = ("1-3", "4-8", "9-16", "17+")
+
+
+def value_turn_bucket(d: Dict[str, Any]) -> str:
+    """Turn bucket for the holdout's value-error-by-turn read (#96).
+
+    Deck identity is only weakly visible in a small opening hand; if the
+    mixed-deck matchup is noise the value head cannot explain, value error
+    should concentrate in the early buckets. Rows without a usable turn
+    land in ``unknown``.
+    """
+    raw = d.get("turn")
+    try:
+        turn = int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        return "unknown"
+    if turn <= 0:
+        return "unknown"
+    if turn <= 3:
+        return "1-3"
+    if turn <= 8:
+        return "4-8"
+    if turn <= 16:
+        return "9-16"
+    return "17+"
+
+
 def holdout_loss(
     net: ForgePointerNet,
     samples: Sequence[Tuple[Dict[str, Any], float]],
     batch: int = 64,
     value_coef: float = 1.0,
-) -> Optional[Dict[str, float]]:
+) -> Optional[Dict[str, Any]]:
     """Mean loss statistics on the holdout with gradients off (#96).
 
     Same ``distill_loss`` terms as training; the split between a policy
     drop and a value drop is the no-signal versus noise-overfit read.
+    Also reports value error bucketed by turn (``value_by_turn``, with
+    row counts in ``value_by_turn_n``): the deck-identity read, since a
+    mixed-deck matchup is hardest to infer early.
     """
     if not samples:
         return None
     net.eval()
     totals: Dict[str, float] = {}
+    vturn: Dict[str, float] = {}
+    nturn: Dict[str, int] = {}
     n = 0
     with torch.no_grad():
         for start in range(0, len(samples), batch):
@@ -315,8 +347,21 @@ def holdout_loss(
             for k, v in stats.items():
                 totals[k] = totals.get(k, 0.0) + v
             n += 1
+            val = torch.stack([s.value for s in steps])
+            errs = (val - val.new_tensor([r for _, r in chunk])) ** 2
+            for (d, _), err in zip(chunk, errs.tolist()):
+                b = value_turn_bucket(d)
+                vturn[b] = vturn.get(b, 0.0) + err
+                nturn[b] = nturn.get(b, 0) + 1
     net.train()
-    return {k: round(v / n, 5) for k, v in totals.items()}
+    out = {k: round(v / n, 5) for k, v in totals.items()}
+    order = (*VALUE_TURN_BUCKETS, "unknown")
+    if nturn:
+        out["value_by_turn"] = {
+            b: round(vturn[b] / nturn[b], 5) for b in order if b in vturn
+        }
+        out["value_by_turn_n"] = {b: nturn[b] for b in order if b in nturn}
+    return out
 
 
 def save_checkpoint(
