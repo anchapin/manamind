@@ -224,6 +224,45 @@ def sample_source(decision: Dict[str, Any]) -> str:
     return str(decision.get("source", "net"))
 
 
+def mix_expert_rows(
+    samples: List[Tuple[Dict[str, Any], float]],
+    frac: float,
+) -> Tuple[List[Tuple[Dict[str, Any], float]], List[int], Dict[str, Any]]:
+    """Replay expert-source rows up to ``frac`` of the training pool (#96).
+
+    The queued buffer-mixing lever: expert rows' value labels are real
+    game outcomes, while the self-play rows' value targets are the noise
+    the value head cannot fit at any weight (vc4, #96). Mixing repeats
+    the pool's expert rows, cyclically, until they make up ``frac`` of
+    the training samples, so the value gradient lands mostly on
+    learnable targets. The holdout is carved before mixing and stays
+    unique. At ``frac <= 0`` (or with no expert rows) the pool passes
+    through unchanged; returns the pool, the source index of each
+    appended copy (for weight extension), and meta.
+    """
+    if frac <= 0:
+        return samples, [], {}
+    if frac >= 1.0:
+        raise ValueError("expert-mix-frac must be below 1.0")
+    meta: Dict[str, Any] = {"expert_mix_frac": frac}
+    expert = [
+        i for i, (d, _) in enumerate(samples) if sample_source(d) == "expert"
+    ]
+    if not expert:
+        meta["expert_mix_skipped"] = "no expert rows"
+        return samples, [], meta
+    others = len(samples) - len(expert)
+    target = int(round(frac / (1.0 - frac) * others))
+    extra = target - len(expert)
+    meta["expert_rows_base"] = len(expert)
+    meta["expert_rows_added"] = max(extra, 0)
+    meta["expert_rows_final"] = len(expert) + max(extra, 0)
+    if extra <= 0:
+        return samples, [], meta
+    fill = [expert[i % len(expert)] for i in range(extra)]
+    return samples + [samples[i] for i in fill], fill, meta
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -321,6 +360,16 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     weights: Optional[List[float]] = None
     if args.kl_weighted:
         weights = kl_weights(net, train_samples, eps=args.kl_eps)
+    train_samples, mix_fill, mix_meta = mix_expert_rows(
+        train_samples, args.expert_mix_frac
+    )
+    if mix_fill:
+        base = (
+            weights
+            if weights is not None
+            else [1.0] * (len(train_samples) - len(mix_fill))
+        )
+        weights = base + [base[i] for i in mix_fill]
     weights = apply_expert_weight(
         weights, train_samples, args.expert_policy_weight
     )
@@ -349,6 +398,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "kl_weighted": args.kl_weighted,
         "kl_eps": args.kl_eps if args.kl_weighted else None,
         "expert_policy_weight": args.expert_policy_weight,
+        **mix_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
         ),
@@ -467,6 +517,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="policy-loss weight multiplier for source=='expert' decisions "
         "(expert-decision recording, manamind#96); 1.0 disables",
+    )
+    ap.add_argument(
+        "--expert-mix-frac",
+        type=float,
+        default=0.0,
+        help="replay expert-source rows up to this share of the train "
+        "pool (buffer mixing, manamind#96); 0 disables",
     )
     ap.add_argument(
         "--imitation-epochs",

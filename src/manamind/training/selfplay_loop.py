@@ -32,6 +32,13 @@ that has just taken a dedicated pass at imitating the Expert.
 ``--imitation-lr-scale`` (default 1) scales the imitation phase's learning
 rate: a gentler pass that gives less of the self-play fit back.
 
+Buffer mixing (``--expert-mix-frac``, off at 0, #96): the trainer replays
+the pool's expert-source rows, cyclically, up to this share of the round's
+training samples. Expert rows' value labels are real game outcomes, while
+self-play rows' value targets are the noise the value head cannot fit at
+any weight (vc4, #96); mixing concentrates the value gradient on
+learnable targets. The holdout is carved before mixing and stays unique.
+
 Decks (``--deck-a`` / ``--deck-b``): passed to the self-play, Expert-game
 and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
 Mono-Green Landfall decks the yardsticks measure; left unset, the scripts
@@ -255,6 +262,13 @@ def expert_weight_flags(args: argparse.Namespace) -> List[str]:
     return ["--expert-policy-weight", str(args.expert_policy_weight)]
 
 
+def mix_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --expert-mix-frac to train_selfplay (#96)."""
+    if args.expert_mix_frac <= 0:
+        return []
+    return ["--expert-mix-frac", str(args.expert_mix_frac)]
+
+
 def imitation_flags(args: argparse.Namespace) -> List[str]:
     """Forward --imitation-epochs to train_selfplay (#96)."""
     if args.imitation_epochs == 0:
@@ -371,6 +385,7 @@ def run_round(
         + imitation_flags(args)
         + imitation_lr_flags(args)
         + value_coef_flags(args)
+        + mix_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -557,6 +572,7 @@ def run_fork_round(
             + imitation_flags(args)
             + imitation_lr_flags(args)
             + value_coef_flags(args)
+            + mix_flags(args)
         )
         gate_path = cand / "gate.json"
         runner(
@@ -717,6 +733,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="forward --expert-policy-weight to train_selfplay: relative "
         "weight on expert-buffer samples (manamind#96)",
+    )
+    ap.add_argument(
+        "--expert-mix-frac",
+        type=float,
+        default=0.0,
+        help="forward --expert-mix-frac to train_selfplay: replay expert "
+        "rows up to this share of the train pool (buffer mixing, "
+        "manamind#96)",
     )
     ap.add_argument(
         "--imitation-epochs",
