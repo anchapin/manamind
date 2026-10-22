@@ -40,9 +40,9 @@ from torch import nn
 
 from manamind.models.forge_pointer import (
     CARD_FEATURES,
+    DECISION_TYPES,
     DECK_BUCKETS,
     DECK_DIM,
-    DECISION_TYPES,
     GLOBAL_FEATURES,
     NAME_BUCKETS,
     NAME_DIM,
