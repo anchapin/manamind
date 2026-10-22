@@ -41,6 +41,8 @@ from torch import nn
 from manamind.models.forge_pointer import (
     CARD_FEATURES,
     DECISION_TYPES,
+    DECK_BUCKETS,
+    DECK_DIM,
     GLOBAL_FEATURES,
     NAME_BUCKETS,
     NAME_DIM,
@@ -50,12 +52,13 @@ from manamind.models.forge_pointer import (
     Decision,
     ForgePointerNet,
     card_features,
+    deck_bucket,
     global_features,
     load_pointer_net,
     name_bucket,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ZONES = ("hand", "bf", "obf")
 GRAVES = ("gy", "ogy")
 INPUT_NAMES: Tuple[str, ...] = (
@@ -71,6 +74,8 @@ INPUT_NAMES: Tuple[str, ...] = (
     "blk_id",
     "batt_x",
     "batt_id",
+    "own_deck",
+    "opp_deck",
 )
 OUTPUT_NAMES = ("value", "priority", "attack", "block")
 Inputs = Dict[str, np.ndarray]
@@ -113,6 +118,8 @@ class PointerExport(nn.Module):
                     ),
                     *(self._names(a[f"{g}_id"], a[f"{g}_m"]) for g in GRAVES),
                     a["glob"],
+                    net.deck_emb(a["own_deck"].long()).reshape(-1),
+                    net.deck_emb(a["opp_deck"].long()).reshape(-1),
                 ]
             )
         )
@@ -186,6 +193,12 @@ def pack(d: Decision) -> Inputs:
         ids, m = _names(d.get(key, []))
         out.update({f"{grave}_id": ids, f"{grave}_m": m})
     out["glob"] = np.asarray(global_features(d), np.float32)
+    out["own_deck"] = np.asarray(
+        [deck_bucket(str(d["deck"])) if d.get("deck") else 0], np.int64
+    )
+    out["opp_deck"] = np.asarray(
+        [deck_bucket(str(d["opp_deck"])) if d.get("opp_deck") else 0], np.int64
+    )
 
     t = d.get("t")
     options = d.get("options", []) if t == "priority" else []
@@ -241,6 +254,10 @@ def schema(net: ForgePointerNet) -> Dict[str, Any]:
         "name_buckets": NAME_BUCKETS,
         "name_dim": NAME_DIM,
         "name_hash": "crc32(name.lower() utf-8) % name_buckets",
+        "deck_buckets": DECK_BUCKETS,
+        "deck_dim": DECK_DIM,
+        "deck_hash": "0 unknown; else 1 + crc32(deck.lower() utf-8) % 255",
+        "deck_fields": ["deck", "opp_deck"],
         "type_words": list(TYPE_WORDS),
         "pips": list(PIPS),
         "phases": list(PHASES),
@@ -260,12 +277,14 @@ def export(net: ForgePointerNet, out_dir: Path) -> Path:
             "battlefield": [{}],
             "blockers": [{}, {}],
             "attackers": [{}],
+            "deck": "red",
+            "opp_deck": "green",
         }
     )
     args = tuple(torch.from_numpy(sample[n]) for n in INPUT_NAMES)
     axes: Dict[str, Dict[int, str]] = {}
     for name in INPUT_NAMES:
-        if name != "glob":
+        if name not in ("glob", "own_deck", "opp_deck"):
             axes[name] = {0: f"n_{name.split('_')[0]}"}
     axes["priority"] = {0: "n_pri_plus_pass"}
     axes["attack"] = {0: "n_att"}

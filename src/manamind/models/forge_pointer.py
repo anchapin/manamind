@@ -28,6 +28,8 @@ Decision = Dict[str, Any]
 
 NAME_BUCKETS = 4096
 NAME_DIM = 16
+DECK_BUCKETS = 256
+DECK_DIM = 8
 TYPE_WORDS = (
     "land",
     "creature",
@@ -65,6 +67,16 @@ _COST_SYMBOL = re.compile(r"\{([^}]*)\}")
 def name_bucket(name: str) -> int:
     """Stable hash of a card name into ``NAME_BUCKETS`` buckets."""
     return zlib.crc32(name.lower().encode("utf-8")) % NAME_BUCKETS
+
+
+def deck_bucket(name: str) -> int:
+    """Stable deck id (manamind #96): 0 is the unknown deck.
+
+    A decision without deck names maps to 0, so legacy buffers train
+    unchanged; a real name can never alias the unknown row.
+    """
+    lower = str(name).lower()
+    return 0 if not lower else 1 + zlib.crc32(lower.encode("utf-8")) % 255
 
 
 def card_features(card: Dict[str, Any]) -> List[float]:
@@ -133,6 +145,10 @@ class ForgePointerNet(nn.Module):
         self.card_dim = card_dim
         self.state_dim = state_dim
         self.name_emb = nn.Embedding(NAME_BUCKETS, NAME_DIM)
+        # Deck identity (manamind #96): one shared table for own and opponent
+        # deck ids, zero-initialized so a v1 checkpoint loads bit-identically.
+        self.deck_emb = nn.Embedding(DECK_BUCKETS, DECK_DIM)
+        nn.init.zeros_(self.deck_emb.weight)
         self.card_mlp = nn.Sequential(
             nn.Linear(CARD_FEATURES + NAME_DIM, card_dim),
             nn.ReLU(),
@@ -140,8 +156,9 @@ class ForgePointerNet(nn.Module):
             nn.ReLU(),
         )
         zones = 3 * 2 * card_dim + 2 * NAME_DIM
+        state_in = zones + GLOBAL_FEATURES + 2 * DECK_DIM
         self.state_mlp = nn.Sequential(
-            nn.Linear(zones + GLOBAL_FEATURES, state_dim),
+            nn.Linear(state_in, state_dim),
             nn.ReLU(),
             nn.Linear(state_dim, state_dim),
             nn.ReLU(),
@@ -196,6 +213,21 @@ class ForgePointerNet(nn.Module):
         mean: torch.Tensor = self.name_emb(ids).mean(0)
         return mean
 
+    def deck_identity(self, d: Decision) -> torch.Tensor:
+        """Own and opponent deck vectors (manamind #96), ``[2 * DECK_DIM]``.
+
+        Missing names land in bucket 0 (the unknown deck), so decisions
+        recorded before deck identity train unchanged.
+        """
+        ids = [
+            deck_bucket(str(d["deck"])) if d.get("deck") else 0,
+            deck_bucket(str(d["opp_deck"])) if d.get("opp_deck") else 0,
+        ]
+        idx = torch.tensor(ids, dtype=torch.long, device=self._device())
+        emb = self.deck_emb(idx)
+        assert isinstance(emb, torch.Tensor)
+        return emb.reshape(-1)
+
     def encode_state(self, d: Decision) -> torch.Tensor:
         """``[state_dim]`` embedding of the seat's visible view."""
         parts = [
@@ -207,6 +239,7 @@ class ForgePointerNet(nn.Module):
             torch.tensor(
                 global_features(d), dtype=torch.float32, device=self._device()
             ),
+            self.deck_identity(d),
         ]
         state: torch.Tensor = self.state_mlp(torch.cat(parts))
         return state
@@ -621,8 +654,35 @@ def actor_critic_loss(
 
 
 def load_pointer_net(path: str) -> Tuple[ForgePointerNet, Optional[dict]]:
-    """Load a checkpoint written by ``train_forge``."""
+    """Load a checkpoint written by ``train_forge``.
+
+    Checkpoints written before the deck-identity inputs (manamind #96) carry
+    a narrower ``state_mlp`` input projection and no ``deck_emb``; their
+    projection columns are zero-padded and the zero-initialized deck
+    embeddings are left at zero, so the loaded net is exactly the v1 net at
+    step 0.
+    """
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     net = ForgePointerNet(**ckpt.get("config", {}))
-    net.load_state_dict(ckpt["network"])
+    state = dict(ckpt["network"])
+    w = state.get("state_mlp.0.weight")
+    proj = net.state_mlp[0]
+    assert isinstance(proj, nn.Linear)
+    if w is not None and w.shape[1] != proj.in_features:
+        v1_width = proj.in_features - 2 * DECK_DIM
+        if w.shape[1] != v1_width:
+            raise ValueError(
+                "state_mlp.0.weight has width "
+                f"{w.shape[1]}; expected {proj.in_features} "
+                f"(schema v2) or {v1_width} (schema v1)"
+            )
+        pad = torch.zeros(w.shape[0], 2 * DECK_DIM)
+        state["state_mlp.0.weight"] = torch.cat([w, pad], dim=1)
+    loaded = net.load_state_dict(state, strict=False)
+    bad_missing = [
+        k for k in loaded.missing_keys if not k.startswith("deck_emb.")
+    ]
+    if bad_missing or loaded.unexpected_keys:
+        # Surface the real mismatch instead of a silently partial load.
+        net.load_state_dict(state, strict=True)
     return net, ckpt.get("meta")
