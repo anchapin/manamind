@@ -10,11 +10,15 @@ import torch
 
 from manamind.models.forge_pointer import (
     CARD_FEATURES,
+    DECK_BUCKETS,
+    DECK_DIM,
     GLOBAL_FEATURES,
+    NAME_DIM,
     ActOutput,
     ForgePointerNet,
     actor_critic_loss,
     card_features,
+    deck_bucket,
     global_features,
     imitation_loss,
     life_potential,
@@ -404,3 +408,64 @@ def test_resume_past_imitation_goes_straight_to_rl(tmp_path: Path) -> None:
         expert_games=2,
     )
     assert meta["games"] == 4 and meta["rl_games_this_run"] == 2
+
+
+def test_deck_bucket_matches_the_host_hash() -> None:
+    assert deck_bucket("") == 0
+    assert deck_bucket("red") == deck_bucket("RED")
+    for name in ("red", "green", "deck-123456789"):
+        assert 1 <= deck_bucket(name) < DECK_BUCKETS
+    assert deck_bucket("red") != deck_bucket("green")
+
+
+def test_deck_identity_zero_init_is_a_noop() -> None:
+    net = ForgePointerNet()
+    with torch.no_grad():
+        base = net.encode_state(PRIORITY)
+        named = net.encode_state(dict(PRIORITY, deck="red", opp_deck="green"))
+    assert base.shape == (net.state_dim,)
+    assert torch.equal(base, named)
+
+
+def test_deck_identity_learns_deck_vectors() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    with torch.no_grad():
+        net.deck_emb.weight.copy_(torch.randn_like(net.deck_emb.weight))
+        a = net.encode_state(dict(PRIORITY, deck="red", opp_deck="green"))
+        b = net.encode_state(dict(PRIORITY, deck="green", opp_deck="red"))
+        legacy = net.encode_state(PRIORITY)
+    assert a.shape == (net.state_dim,)
+    assert not torch.equal(a, b)
+    assert not torch.equal(a, legacy)
+
+
+def test_load_pointer_net_pads_a_v1_checkpoint(tmp_path: Path) -> None:
+    net = ForgePointerNet()
+    zones = 3 * 2 * net.card_dim + 2 * NAME_DIM
+    state = {
+        k: v
+        for k, v in net.state_dict().items()
+        if not k.startswith("deck_emb.")
+    }
+    state["state_mlp.0.weight"] = state["state_mlp.0.weight"][
+        :, : zones + GLOBAL_FEATURES
+    ]
+    path = tmp_path / "v1.pt"
+    torch.save({"network": state, "config": {}}, path)
+    loaded, _ = load_pointer_net(str(path))
+    with torch.no_grad():
+        # The zero-initialized deck embeddings make the loaded net exactly
+        # the v1 net, deck names included: identity starts as no-op.
+        moved = dict(PRIORITY, deck="red", opp_deck="green")
+        assert torch.equal(
+            loaded.encode_state(moved), net.encode_state(PRIORITY)
+        )
+
+
+def test_deck_dim_is_the_warm_start_pad() -> None:
+    zones = 3 * 2 * ForgePointerNet().card_dim + 2 * NAME_DIM
+    net = ForgePointerNet()
+    assert (
+        net.state_mlp[0].in_features == zones + GLOBAL_FEATURES + 2 * DECK_DIM
+    )

@@ -87,3 +87,26 @@ def test_cli_exports_a_checkpoint_and_checks_parity(
     printed = capsys.readouterr().out
     diff = float(printed.rsplit("=", 1)[1])
     assert diff < TOL
+
+
+def test_pack_emits_deck_buckets() -> None:
+    packed = fo.pack(dict(PRIORITY, deck="Red", opp_deck="green"))
+    assert packed["own_deck"].tolist() == [fo.deck_bucket("red")]
+    assert packed["opp_deck"].tolist() == [fo.deck_bucket("green")]
+    legacy = fo.pack({"t": "priority"})
+    assert legacy["own_deck"].tolist() == [0]
+    assert legacy["opp_deck"].tolist() == [0]
+
+
+def test_schema_and_graph_carry_deck_identity(tmp_path: Path) -> None:
+    import onnx
+
+    net = _net()
+    path = fo.export(net, tmp_path)
+    graph = onnx.load(str(path)).graph
+    graph_inputs = [i.name for i in graph.input]
+    assert graph_inputs[-2:] == ["own_deck", "opp_deck"]
+    assert graph_inputs == list(fo.INPUT_NAMES)
+    schema = json.loads((tmp_path / "forge_pointer.schema.json").read_text())
+    assert schema["deck_buckets"] == 256
+    assert schema["deck_fields"] == ["deck", "opp_deck"]
