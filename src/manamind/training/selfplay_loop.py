@@ -290,6 +290,13 @@ def value_coef_flags(args: argparse.Namespace) -> List[str]:
     return ["--value-coef", str(args.value_coef)]
 
 
+def value_target_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-target-blend to train_selfplay (#96)."""
+    if args.value_target_blend <= 0:
+        return []
+    return ["--value-target-blend", str(args.value_target_blend)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -385,6 +392,7 @@ def run_round(
         + imitation_flags(args)
         + imitation_lr_flags(args)
         + value_coef_flags(args)
+        + value_target_flags(args)
         + mix_flags(args)
     )
     gate_path = cand / "gate.json"
@@ -572,6 +580,7 @@ def run_fork_round(
             + imitation_flags(args)
             + imitation_lr_flags(args)
             + value_coef_flags(args)
+            + value_target_flags(args)
             + mix_flags(args)
         )
         gate_path = cand / "gate.json"
@@ -765,6 +774,14 @@ def build_parser() -> argparse.ArgumentParser:
         "weight on the value loss (manamind#96)",
     )
     ap.add_argument(
+        "--value-target-blend",
+        type=float,
+        default=0.0,
+        help="forward --value-target-blend to train_selfplay: blend "
+        "self-play value targets with a frozen copy of the round's "
+        "starting net (manamind#96)",
+    )
+    ap.add_argument(
         "--anchor-games",
         type=int,
         default=0,
@@ -843,6 +860,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--anchor-games must be 0 or a positive even number")
     if args.expert_games < 0:
         raise SystemExit("--expert-games must be 0 or positive")
+    if not 0 <= args.value_target_blend < 1.0:
+        raise SystemExit("--value-target-blend must be 0 or below 1.0")
     if args.kl_eps < 0:
         raise SystemExit("--kl-eps must be non-negative")
     if args.c_scale is not None and not args.c_scale > 0:
