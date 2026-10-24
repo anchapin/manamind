@@ -670,6 +670,38 @@ def test_value_coef_default_is_omitted(tmp_path: Path) -> None:
     assert "--value-coef" not in fakes.trains[0]
 
 
+def test_value_target_blend_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-target-blend",
+            "0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-target-blend" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--value-target-blend") + 1]
+        == "0.5"
+    )
+
+
+def test_value_target_blend_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-target-blend" not in fakes.trains[0]
+
+
 def test_expert_mix_frac_forwards_to_train(tmp_path: Path) -> None:
     fakes = Fakes([0.5, 0.45, 0.6, 0.4])
     run(
