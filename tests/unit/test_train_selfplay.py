@@ -1,5 +1,6 @@
 """Training ForgePointerNet on Planar Nexus self-play records (#87)."""
 
+import copy
 import gzip
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ from manamind.models.forge_pointer import (
 )
 from manamind.training.train_selfplay import (
     apply_expert_weight,
+    blend_value_targets,
     build_parser,
     carve_holdout,
     flatten,
@@ -556,3 +558,67 @@ def test_imitation_lr_scale_default_is_one(tmp_path: Path) -> None:
         )
     )
     assert meta["imitation"]["lr_scale"] == 1.0
+
+
+def test_blend_value_targets_default_passthrough() -> None:
+    net = ForgePointerNet()
+    samples = [(dict(PRIORITY), 1.0), (dict(ATTACK), -1.0)]
+    assert blend_value_targets(net, samples, 0.0) is None
+
+
+def test_blend_value_targets_rejects_full_blend() -> None:
+    net = ForgePointerNet()
+    with pytest.raises(ValueError):
+        blend_value_targets(net, [(dict(PRIORITY), 1.0)], 1.0)
+
+
+def test_blend_value_targets_blends_selfplay_keeps_expert() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    expert = {**PRIORITY, "source": "expert"}
+    samples = [(dict(PRIORITY), 1.0), (expert, -1.0)]
+    out = blend_value_targets(net, samples, 0.5)
+    assert out is not None
+    blended, meta = out
+    frozen = copy.deepcopy(net).eval()
+    with torch.no_grad():
+        v = float(frozen.distill(dict(PRIORITY)).value)
+    assert blended[0][1] == pytest.approx(0.5 + 0.5 * v, abs=1e-6)
+    assert blended[1][1] == -1.0
+    assert meta["value_target_blend"] == 0.5
+    assert meta["value_target_rows"] == 1
+
+
+def test_run_blends_targets_and_keeps_holdout_outcomes(tmp_path: Path) -> None:
+    rows = [json.dumps(_game(s)) + "\n" for s in range(6)]
+    rows += [json.dumps(_expert_game(s)) + "\n" for s in range(2)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-target-blend",
+                "0.5",
+            ]
+        )
+    )
+    assert meta["value_target_blend"] == 0.5
+    assert meta["value_target_rows"] == 18
+
+
+def test_run_default_adds_no_value_target_keys(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(["--data", str(data), "--out", str(out)])
+    )
+    assert "value_target_blend" not in meta
+    assert "value_target_rows" not in meta

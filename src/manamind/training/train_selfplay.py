@@ -18,6 +18,7 @@ Example::
 from __future__ import annotations
 
 import argparse
+import copy
 import gzip
 import json
 import random
@@ -263,6 +264,45 @@ def mix_expert_rows(
     return samples + [samples[i] for i in fill], fill, meta
 
 
+def blend_value_targets(
+    net: ForgePointerNet,
+    samples: List[Tuple[Dict[str, Any], float]],
+    blend: float,
+) -> Optional[Tuple[List[Tuple[Dict[str, Any], float]], Dict[str, Any]]]:
+    """Blend each self-play row's value target with a frozen net's value (#96).
+
+    The value-target lever: self-play rows' recorded outcomes are the
+    noise the value head cannot fit at any weight (vc4, #96), while
+    expert rows' real outcomes fit fine. With ``blend > 0`` each
+    self-play row's target becomes ``(1 - blend) * z + blend * V(s)``
+    where ``V`` is a frozen copy of the round's starting net (a target
+    network, deep-copied before any training step), computed once per
+    round before the epochs run. Blending trades label variance for
+    bias toward the round's starting value read, the standard target
+    network trade. Expert-source rows keep their real outcomes and the
+    holdout keeps recorded outcomes everywhere, so holdout metrics stay
+    comparable across runs. Returns ``(new_samples, meta)``; ``None``
+    when ``blend <= 0`` so the default path stays byte-identical.
+    """
+    if blend <= 0:
+        return None
+    if blend >= 1.0:
+        raise ValueError("value-target-blend must be below 1.0")
+    frozen = copy.deepcopy(net).eval()
+    blended: List[Tuple[Dict[str, Any], float]] = []
+    rows = 0
+    with torch.no_grad():
+        for d, z in samples:
+            if sample_source(d) == "expert":
+                blended.append((d, z))
+                continue
+            v = float(frozen.distill(d).value)
+            blended.append((d, (1.0 - blend) * z + blend * v))
+            rows += 1
+    meta = {"value_target_blend": blend, "value_target_rows": rows}
+    return blended, meta
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -418,6 +458,10 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     weights = apply_expert_weight(
         weights, train_samples, args.expert_policy_weight
     )
+    blended = blend_value_targets(net, train_samples, args.value_target_blend)
+    value_blend_meta: Dict[str, Any] = {}
+    if blended is not None:
+        train_samples, value_blend_meta = blended
     t0 = time.time()
     history: List[Dict[str, Any]] = []
     stats = train_epochs(
@@ -444,6 +488,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "kl_eps": args.kl_eps if args.kl_weighted else None,
         "expert_policy_weight": args.expert_policy_weight,
         **mix_meta,
+        **value_blend_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
         ),
@@ -537,6 +582,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--value-coef", type=float, default=1.0)
+    ap.add_argument(
+        "--value-target-blend",
+        type=float,
+        default=0.0,
+        help=(
+            "blend self-play value targets with a frozen copy of the "
+            "round's starting net (0 = recorded outcomes, the default); "
+            "expert rows and the holdout keep recorded outcomes"
+        ),
+    )
     ap.add_argument(
         "--holdout-frac",
         type=float,
