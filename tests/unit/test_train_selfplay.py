@@ -14,6 +14,7 @@ from manamind.models.forge_pointer import (
 )
 from manamind.training.train_selfplay import (
     apply_expert_weight,
+    bootstrap_targets,
     build_parser,
     carve_holdout,
     flatten,
@@ -372,6 +373,97 @@ def test_run_carves_holdout_and_records_it(tmp_path: Path) -> None:
     )
     assert meta3["holdout_examples"] == 0 and "holdout" not in meta3
     assert meta3["decisions"] == meta["decisions"]
+
+
+def test_bootstrap_targets_zero_frac_is_noop() -> None:
+    games = [{"decisions": [{"seat": 0, "root_value": 0.2}], "returns": [1.0]}]
+    assert bootstrap_targets(games, 0.0) == {}
+    assert "_value_boot" not in games[0]["decisions"][0]
+
+
+def test_bootstrap_targets_blends_next_net_value_with_seat_flip() -> None:
+    games = [
+        {
+            "decisions": [
+                {"seat": 0},
+                {"seat": 1, "root_value": 0.6},
+                {"seat": 0},
+            ],
+            "returns": [1.0, -1.0, -1.0],
+        }
+    ]
+    meta = bootstrap_targets(games, 0.5)
+    d = games[0]["decisions"]
+    # Decision 0's next root value sits on the other seat, so it flips sign.
+    assert d[0]["_value_boot"] == pytest.approx(0.5 * 1.0 + 0.5 * (-0.6))
+    # Decisions with no later root value keep the recorded outcome.
+    assert "_value_boot" not in d[1]
+    assert "_value_boot" not in d[2]
+    assert meta["value_bootstrap_rows"] == 1
+    assert meta["value_bootstrap_decisions"] == 3
+    # A same-seat next root value keeps its sign.
+    games2 = [
+        {
+            "decisions": [
+                {"seat": 0},
+                {"seat": 0, "root_value": -0.4},
+            ],
+            "returns": [1.0, -1.0],
+        }
+    ]
+    bootstrap_targets(games2, 0.5)
+    assert games2[0]["decisions"][0]["_value_boot"] == pytest.approx(
+        0.5 * 1.0 + 0.5 * (-0.4)
+    )
+
+
+def test_bootstrap_targets_rejects_full_share() -> None:
+    with pytest.raises(ValueError):
+        bootstrap_targets([{"decisions": [], "returns": []}], 1.0)
+
+
+def test_run_bootstraps_train_targets_but_keeps_holdout(tmp_path: Path) -> None:
+    game = _game(7, 2)
+    # Each decision's next one carries a root value from the other seat, so
+    # every train target moves while the holdout keeps the raw outcomes.
+    decisions = game["decisions"]
+    for i, d in enumerate(decisions[:-1]):
+        d["seat"] = i % 2
+        d["root_value"] = 0.5
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(game) + "\n")
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0.2",
+                "--value-bootstrap-frac",
+                "0.5",
+            ]
+        )
+    )
+    assert meta["value_bootstrap_frac"] == 0.5
+    assert meta["value_bootstrap_rows"] == len(decisions) - 1
+    assert meta["value_bootstrap_decisions"] == len(decisions)
+    assert meta["holdout_examples"] > 0 and "holdout" in meta
+    meta2 = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "round2"),
+                "--holdout-frac",
+                "0.2",
+            ]
+        )
+    )
+    assert "value_bootstrap_frac" not in meta2
 
 
 def test_kl_weights_mean_one_floor_and_deterministic() -> None:

@@ -700,3 +700,35 @@ def test_expert_mix_frac_default_is_omitted(tmp_path: Path) -> None:
         fakes.trainer,
     )
     assert "--expert-mix-frac" not in fakes.trains[0]
+
+def test_value_bootstrap_frac_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-bootstrap-frac",
+            "0.5",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-bootstrap-frac" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--value-bootstrap-frac") + 1]
+        == "0.5"
+    )
+
+
+def test_value_bootstrap_frac_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-bootstrap-frac" not in fakes.trains[0]
+

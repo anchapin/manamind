@@ -263,6 +263,62 @@ def mix_expert_rows(
     return samples + [samples[i] for i in fill], fill, meta
 
 
+
+def bootstrap_targets(
+    games: Sequence[Dict[str, Any]], frac: float
+) -> Dict[str, Any]:
+    """Blend each decision's value label toward a 1-step bootstrap (#96).
+
+    The value-target lever: self-play rows' final-outcome labels are the
+    noise the value head cannot fit at any weight (vc4, #96), and the
+    levers tried so far -- loss weighting (vc4), expert rows in the
+    buffer (mix3/mix6), deck identity in the features (dekid1) -- did
+    not move early-turn error. Each decision's target becomes
+    ``(1 - frac) * r + frac * flip(root_value)``: ``frac`` of the label
+    comes from the next net-source decision's recorded ``root_value``
+    (the search's post-search value estimate for that position, from the
+    searching seat's perspective, negated when the next decision belongs
+    to the other seat). Decisions with no later root value in their game
+    (the last one, or legacy rows without the field) keep ``r``. The
+    annotation lands on the decision rows before the holdout is carved;
+    only the train pool reads ``_value_boot``, so holdout metrics stay
+    on the recorded outcomes and stay comparable across runs. Returns
+    meta for the training report; ``frac <= 0`` (the default) changes
+    nothing.
+    """
+    if frac <= 0:
+        return {}
+    if frac >= 1.0:
+        raise ValueError("value-bootstrap-frac must be below 1.0")
+    rows = 0
+    total = 0
+    for g in games:
+        decisions = g.get("decisions", [])
+        returns = g.get("returns", [])
+        for i, d in enumerate(decisions):
+            total += 1
+            nxt = next(
+                (
+                    j
+                    for j in range(i + 1, len(decisions))
+                    if decisions[j].get("root_value") is not None
+                ),
+                None,
+            )
+            if nxt is None:
+                continue
+            v = float(decisions[nxt]["root_value"])
+            if int(decisions[nxt].get("seat", 0)) != int(d.get("seat", 0)):
+                v = -v
+            d["_value_boot"] = (1.0 - frac) * float(returns[i]) + frac * v
+            rows += 1
+    return {
+        "value_bootstrap_frac": frac,
+        "value_bootstrap_rows": rows,
+        "value_bootstrap_decisions": total,
+    }
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -390,6 +446,7 @@ def save_checkpoint(
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     torch.manual_seed(args.seed)
     games = load_selfplay(args.data, args.buffer_games)
+    boot_meta = bootstrap_targets(games, args.value_bootstrap_frac)
     samples = flatten(games)
     train_samples, holdout = carve_holdout(
         samples, args.holdout_frac, args.seed + 1
@@ -418,6 +475,12 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     weights = apply_expert_weight(
         weights, train_samples, args.expert_policy_weight
     )
+    if args.value_bootstrap_frac > 0:
+        # Train rows read the blended 1-step bootstrap targets; the
+        # holdout keeps the recorded outcomes (bootstrap_targets).
+        train_samples = [
+            (d, d.get("_value_boot", r)) for d, r in train_samples
+        ]
     t0 = time.time()
     history: List[Dict[str, Any]] = []
     stats = train_epochs(
@@ -444,6 +507,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "kl_eps": args.kl_eps if args.kl_weighted else None,
         "expert_policy_weight": args.expert_policy_weight,
         **mix_meta,
+        **boot_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
         ),
@@ -562,6 +626,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="policy-loss weight multiplier for source=='expert' decisions "
         "(expert-decision recording, manamind#96); 1.0 disables",
+    )
+    ap.add_argument(
+        "--value-bootstrap-frac",
+        type=float,
+        default=0.0,
+        help="blend each value target toward the next net decision's "
+        "recorded root value: target = (1 - frac) * r + frac * "
+        "flip(root_value); 0 keeps the recorded outcome (#96)",
     )
     ap.add_argument(
         "--expert-mix-frac",

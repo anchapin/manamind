@@ -269,6 +269,13 @@ def mix_flags(args: argparse.Namespace) -> List[str]:
     return ["--expert-mix-frac", str(args.expert_mix_frac)]
 
 
+def bootstrap_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-bootstrap-frac to train_selfplay (#96)."""
+    if args.value_bootstrap_frac <= 0:
+        return []
+    return ["--value-bootstrap-frac", str(args.value_bootstrap_frac)]
+
+
 def imitation_flags(args: argparse.Namespace) -> List[str]:
     """Forward --imitation-epochs to train_selfplay (#96)."""
     if args.imitation_epochs == 0:
@@ -386,6 +393,7 @@ def run_round(
         + imitation_lr_flags(args)
         + value_coef_flags(args)
         + mix_flags(args)
+        + bootstrap_flags(args)
     )
     gate_path = cand / "gate.json"
     runner(
@@ -733,6 +741,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="forward --expert-policy-weight to train_selfplay: relative "
         "weight on expert-buffer samples (manamind#96)",
+    )
+    ap.add_argument(
+        "--value-bootstrap-frac",
+        type=float,
+        default=0.0,
+        help="forward --value-bootstrap-frac to train_selfplay: blend each "
+        "value target toward the next net decision's recorded root value",
     )
     ap.add_argument(
         "--expert-mix-frac",
