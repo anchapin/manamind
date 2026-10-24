@@ -26,6 +26,7 @@ from manamind.training.train_selfplay import (
     reset_value_head,
     run,
     sample_source,
+    search_value_targets,
     train_epochs,
 )
 
@@ -587,6 +588,69 @@ def test_blend_value_targets_blends_selfplay_keeps_expert() -> None:
     assert blended[1][1] == -1.0
     assert meta["value_target_blend"] == 0.5
     assert meta["value_target_rows"] == 1
+
+
+def test_search_value_targets_default_passthrough() -> None:
+    samples = [(dict(PRIORITY), 1.0), (dict(ATTACK), -1.0)]
+    assert search_value_targets(samples, False) is None
+
+
+def test_search_value_targets_swaps_net_keeps_expert_and_fallback() -> None:
+    expert = {**PRIORITY, "source": "expert"}
+    net_row = {**PRIORITY, "root_value": 0.4}
+    samples = [(net_row, 1.0), (dict(ATTACK), -1.0), (expert, 1.0)]
+    out = search_value_targets(samples, True)
+    assert out is not None
+    swapped, meta = out
+    assert swapped[0][1] == pytest.approx(0.4)
+    assert swapped[1][1] == -1.0
+    assert swapped[2][1] == 1.0
+    assert meta == {
+        "value_source": "search",
+        "value_search_rows": 1,
+        "value_source_fallback": 1,
+    }
+
+
+def test_run_uses_search_targets_and_records_it(tmp_path: Path) -> None:
+    rows = []
+    for s in range(3):
+        g = _game(s)
+        for d in g["decisions"]:
+            d["root_value"] = 0.25
+        rows.append(json.dumps(g) + "\n")
+    rows += [json.dumps(_expert_game(s)) + "\n" for s in range(2)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-source",
+                "search",
+            ]
+        )
+    )
+    assert meta["value_source"] == "search"
+    assert meta["value_search_rows"] == 9
+    assert meta["value_source_fallback"] == 0
+
+
+def test_run_default_adds_no_value_source_keys(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(["--data", str(data), "--out", str(out)])
+    )
+    assert "value_source" not in meta
+    assert "value_search_rows" not in meta
 
 
 def test_run_blends_targets_and_keeps_holdout_outcomes(tmp_path: Path) -> None:

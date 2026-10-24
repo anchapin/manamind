@@ -303,6 +303,50 @@ def blend_value_targets(
     return blended, meta
 
 
+def search_value_targets(
+    samples: List[Tuple[Dict[str, Any], float]],
+    enabled: bool,
+) -> Optional[Tuple[List[Tuple[Dict[str, Any], float]], Dict[str, Any]]]:
+    """Swap self-play rows' value target to the search's root value (#96).
+
+    The search-derived value-target lever: ``ForgeSearchResult.rootValue``
+    (planar-nexus) is the search's own evaluation at each net decision,
+    from the deciding seat's point of view -- the same seat convention
+    and [-1, 1] scale as the recorded outcome ``z``. With ``enabled``
+    each self-play row carrying ``root_value`` trains toward the
+    search's read instead of the recorded game outcome (the label the
+    value head could not fit under any scheme tried: vc4, deck identity,
+    expert mix, the target blend). Expert rows keep real outcomes (the
+    Expert AI's moves are not search-scored) and the holdout keeps
+    recorded outcomes, so holdout metrics stay comparable across runs.
+    Rows without ``root_value`` (legacy records) fall back to ``z`` and
+    are counted. Returns ``(new_samples, meta)``; ``None`` when not
+    enabled so the default path stays byte-identical. Runs before
+    ``blend_value_targets``, so ``--value-target-blend`` blends toward
+    ``V(s)`` on top of the search base: ``(1 - B) * q + B * V(s)``.
+    """
+    if not enabled:
+        return None
+    swapped: List[Tuple[Dict[str, Any], float]] = []
+    rows = 0
+    fallback = 0
+    for d, z in samples:
+        raw = d.get("root_value")
+        if sample_source(d) != "expert" and isinstance(raw, (int, float)):
+            swapped.append((d, float(raw)))
+            rows += 1
+        else:
+            swapped.append((d, z))
+            if sample_source(d) != "expert":
+                fallback += 1
+    meta = {
+        "value_source": "search",
+        "value_search_rows": rows,
+        "value_source_fallback": fallback,
+    }
+    return swapped, meta
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -434,6 +478,12 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     train_samples, holdout = carve_holdout(
         samples, args.holdout_frac, args.seed + 1
     )
+    searched = search_value_targets(
+        train_samples, args.value_source == "search"
+    )
+    value_source_meta: Dict[str, Any] = {}
+    if searched is not None:
+        train_samples, value_source_meta = searched
     if args.init is not None:
         net, prev = load_pointer_net(str(args.init))
         parent_games = int((prev or {}).get("selfplay_games_total", 0))
@@ -488,6 +538,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "kl_eps": args.kl_eps if args.kl_weighted else None,
         "expert_policy_weight": args.expert_policy_weight,
         **mix_meta,
+        **value_source_meta,
         **value_blend_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
@@ -589,6 +640,19 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "blend self-play value targets with a frozen copy of the "
             "round's starting net (0 = recorded outcomes, the default); "
+            "expert rows and the holdout keep recorded outcomes"
+        ),
+    )
+    ap.add_argument(
+        "--value-source",
+        choices=("outcome", "search"),
+        default="outcome",
+        help=(
+            "self-play value-target source (manamind#96): 'outcome' keeps "
+            "the recorded game result, 'search' trains self-play rows "
+            "toward the search's recorded root evaluation (root_value, "
+            "the deciding seat's point of view, same [-1, 1] scale); rows "
+            "without root_value fall back to the outcome and are counted; "
             "expert rows and the holdout keep recorded outcomes"
         ),
     )

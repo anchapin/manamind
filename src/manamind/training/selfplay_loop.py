@@ -297,6 +297,13 @@ def value_target_flags(args: argparse.Namespace) -> List[str]:
     return ["--value-target-blend", str(args.value_target_blend)]
 
 
+def value_source_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-source to train_selfplay (#96)."""
+    if args.value_source == "outcome":
+        return []
+    return ["--value-source", args.value_source]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -393,6 +400,7 @@ def run_round(
         + imitation_lr_flags(args)
         + value_coef_flags(args)
         + value_target_flags(args)
+        + value_source_flags(args)
         + mix_flags(args)
     )
     gate_path = cand / "gate.json"
@@ -581,6 +589,7 @@ def run_fork_round(
             + imitation_lr_flags(args)
             + value_coef_flags(args)
             + value_target_flags(args)
+            + value_source_flags(args)
             + mix_flags(args)
         )
         gate_path = cand / "gate.json"
@@ -780,6 +789,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="forward --value-target-blend to train_selfplay: blend "
         "self-play value targets with a frozen copy of the round's "
         "starting net (manamind#96)",
+    )
+    ap.add_argument(
+        "--value-source",
+        choices=("outcome", "search"),
+        default="outcome",
+        help="forward --value-source to train_selfplay: 'search' trains "
+        "self-play rows toward the search's recorded root evaluation "
+        "(manamind#96)",
     )
     ap.add_argument(
         "--anchor-games",
