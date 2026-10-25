@@ -310,6 +310,9 @@ def search_value_targets(
     """Swap self-play rows' value target to the search's root value (#96).
 
     The search-derived value-target lever: ``ForgeSearchResult.rootValue``
+    planar-nexus writes that read as ``rootValue`` (camelCase) in the JSONL
+    rows it records; ``root_value`` stays accepted so older local
+    constructions keep working.
     (planar-nexus) is the search's own evaluation at each net decision,
     from the deciding seat's point of view -- the same seat convention
     and [-1, 1] scale as the recorded outcome ``z``. With ``enabled``
@@ -319,7 +322,7 @@ def search_value_targets(
     expert mix, the target blend). Expert rows keep real outcomes (the
     Expert AI's moves are not search-scored) and the holdout keeps
     recorded outcomes, so holdout metrics stay comparable across runs.
-    Rows without ``root_value`` (legacy records) fall back to ``z`` and
+    Rows without a numeric value under either key fall back to ``z`` and
     are counted. Returns ``(new_samples, meta)``; ``None`` when not
     enabled so the default path stays byte-identical. Runs before
     ``blend_value_targets``, so ``--value-target-blend`` blends toward
@@ -332,6 +335,8 @@ def search_value_targets(
     fallback = 0
     for d, z in samples:
         raw = d.get("root_value")
+        if not isinstance(raw, (int, float)):
+            raw = d.get("rootValue")
         if sample_source(d) != "expert" and isinstance(raw, (int, float)):
             swapped.append((d, float(raw)))
             rows += 1

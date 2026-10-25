@@ -612,6 +612,51 @@ def test_search_value_targets_swaps_net_keeps_expert_and_fallback() -> None:
     }
 
 
+def test_search_value_targets_accepts_planar_nexus_rootvalue() -> None:
+    net_row = {**PRIORITY, "rootValue": 0.37}
+    expert = {**PRIORITY, "source": "expert", "rootValue": 0.9}
+    out = search_value_targets([(net_row, 1.0), (expert, 1.0)], True)
+    assert out is not None
+    swapped, meta = out
+    assert swapped[0][1] == pytest.approx(0.37)
+    assert swapped[1][1] == 1.0
+    assert meta == {
+        "value_source": "search",
+        "value_search_rows": 1,
+        "value_source_fallback": 0,
+    }
+
+
+def test_run_uses_planar_nexus_camelcase_rootvalue(tmp_path: Path) -> None:
+    rows = []
+    for s in range(3):
+        g = _game(s)
+        for d in g["decisions"]:
+            d["rootValue"] = 0.25
+        rows.append(json.dumps(g) + "\n")
+    rows += [json.dumps(_expert_game(s)) + "\n" for s in range(2)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-source",
+                "search",
+            ]
+        )
+    )
+    assert meta["value_source"] == "search"
+    assert meta["value_search_rows"] == 9
+    assert meta["value_source_fallback"] == 0
+
+
 def test_run_uses_search_targets_and_records_it(tmp_path: Path) -> None:
     rows = []
     for s in range(3):
