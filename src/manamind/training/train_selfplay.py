@@ -352,8 +352,103 @@ def search_value_targets(
     return swapped, meta
 
 
+def nstep_value_targets(
+    net: ForgePointerNet,
+    samples: List[Tuple[Dict[str, Any], float]],
+    traj: Sequence[Tuple[int, int]],
+    state_lookup: Dict[Tuple[int, int], Dict[str, Any]],
+    nstep: int,
+) -> Optional[Tuple[List[Tuple[Dict[str, Any], float]], Dict[str, Any]]]:
+    """Bootstrap self-play rows' value targets from a later state (#96).
+
+    The trajectory-level value-target lever: the holdout's value-by-turn
+    diagnostic says the value head cannot fit the recorded outcome in
+    the opening turns because it cannot tell which deck it holds, while
+    the same head reads mid-game states several times better. With
+    ``nstep > 0`` each self-play row's target becomes the frozen
+    starting net's value at the state ``nstep`` recorded decisions
+    deeper in the same game, seat-adjusted: ``V(s_{t+N})`` when both
+    rows share a seat, ``-V(s_{t+N})`` when seats differ (``V`` reads
+    from the deciding seat). No intermediate rewards exist, so with
+    gamma 1 the n-step return is exactly that bootstrapped value. Rows
+    within ``N`` of the game's end keep ``z`` (nothing deeper to
+    bootstrap from), expert rows keep real outcomes, and self-play rows
+    whose seat is unknown keep ``z`` and are counted. Bootstrap states
+    come from the full buffer, so a state carved into the holdout can
+    still serve as a target source; the holdout itself keeps recorded
+    outcomes, so holdout metrics stay comparable across runs. Trades
+    the outcome's variance for the frozen net's bias, anchored where
+    the head can fit. Runs before ``blend_value_targets``, so
+    ``--value-target-blend`` blends toward ``V(s)`` on top of the
+    n-step base. Do not combine with ``--flush-value-head``: a reset
+    value head has nothing to bootstrap from. Returns
+    ``(new_samples, meta)``; ``None`` when ``nstep <= 0`` so the
+    default path stays byte-identical.
+    """
+    if nstep <= 0:
+        return None
+    if len(traj) != len(samples):
+        raise ValueError("traj length must match samples")
+    frozen = copy.deepcopy(net).eval()
+    bootstrapped: List[Tuple[Dict[str, Any], float]] = []
+    rows = 0
+    terminal = 0
+    unknown = 0
+    with torch.no_grad():
+        for (d, z), (gi, si) in zip(samples, traj):
+            if sample_source(d) == "expert":
+                bootstrapped.append((d, z))
+                continue
+            nxt = state_lookup.get((gi, si + nstep))
+            seat = d.get("seat")
+            if nxt is None or seat is None or nxt.get("seat") is None:
+                bootstrapped.append((d, z))
+                if nxt is None:
+                    terminal += 1
+                else:
+                    unknown += 1
+                continue
+            v = float(frozen.distill(nxt).value)
+            bootstrapped.append((d, v if seat == nxt.get("seat") else -v))
+            rows += 1
+    meta = {
+        "value_target_nstep": nstep,
+        "value_target_rows": rows,
+        "value_target_terminal_rows": terminal,
+        "value_target_seat_unknown": unknown,
+    }
+    return bootstrapped, meta
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
+
+
+def carve_holdout_indexed(
+    samples: List[Tuple[Dict[str, Any], float]],
+    frac: float,
+    seed: int,
+) -> Tuple[
+    List[Tuple[Dict[str, Any], float]],
+    List[Tuple[Dict[str, Any], float]],
+    List[int],
+]:
+    """``carve_holdout`` that also returns the train pool's flat indices.
+
+    The n-step value-target lever maps each train row back to its
+    trajectory position, which only the flat index carries.
+    """
+    n = int(len(samples) * frac)
+    n = min(n, len(samples) // 2) if samples else 0
+    if n <= 0:
+        return list(samples), [], list(range(len(samples)))
+    rng = random.Random(seed)
+    idx = set(rng.sample(range(len(samples)), n))
+    return (
+        [s for i, s in enumerate(samples) if i not in idx],
+        [samples[i] for i in sorted(idx)],
+        [i for i in range(len(samples)) if i not in idx],
+    )
 
 
 def carve_holdout(
@@ -368,16 +463,8 @@ def carve_holdout(
     The holdout is drawn at random with ``seed`` so a run is reproducible,
     and is capped at half the samples so tiny buffers still train.
     """
-    n = int(len(samples) * frac)
-    n = min(n, len(samples) // 2) if samples else 0
-    if n <= 0:
-        return list(samples), []
-    rng = random.Random(seed)
-    idx = set(rng.sample(range(len(samples)), n))
-    return (
-        [s for i, s in enumerate(samples) if i not in idx],
-        [samples[i] for i in sorted(idx)],
-    )
+    train, holdout, _ = carve_holdout_indexed(samples, frac, seed)
+    return train, holdout
 
 
 VALUE_TURN_BUCKETS = ("1-3", "4-8", "9-16", "17+")
@@ -480,7 +567,14 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     torch.manual_seed(args.seed)
     games = load_selfplay(args.data, args.buffer_games)
     samples = flatten(games)
-    train_samples, holdout = carve_holdout(
+    traj: List[Tuple[int, int]] = []
+    state_lookup: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    if args.value_target_nstep > 0:
+        for gi, game in enumerate(games):
+            for si, decision in enumerate(game["decisions"]):
+                traj.append((gi, si))
+                state_lookup[(gi, si)] = decision
+    train_samples, holdout, train_idx = carve_holdout_indexed(
         samples, args.holdout_frac, args.seed + 1
     )
     searched = search_value_targets(
@@ -497,6 +591,22 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     else:
         net, parent_games = ForgePointerNet(), 0
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
+    if args.value_target_nstep > 0 and args.flush_value_head:
+        raise ValueError(
+            "--flush-value-head resets the value head the n-step targets"
+            " bootstrap from; drop one of the two"
+        )
+    value_nstep_meta: Dict[str, Any] = {}
+    if args.value_target_nstep > 0:
+        nstepped = nstep_value_targets(
+            net,
+            train_samples,
+            [traj[i] for i in train_idx],
+            state_lookup,
+            args.value_target_nstep,
+        )
+        if nstepped is not None:
+            train_samples, value_nstep_meta = nstepped
     weights: Optional[List[float]] = None
     if args.kl_weighted:
         weights = kl_weights(net, train_samples, eps=args.kl_eps)
@@ -544,6 +654,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "expert_policy_weight": args.expert_policy_weight,
         **mix_meta,
         **value_source_meta,
+        **value_nstep_meta,
         **value_blend_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
@@ -659,6 +770,18 @@ def build_parser() -> argparse.ArgumentParser:
             "the deciding seat's point of view, same [-1, 1] scale); rows "
             "without root_value fall back to the outcome and are counted; "
             "expert rows and the holdout keep recorded outcomes"
+        ),
+    )
+    ap.add_argument(
+        "--value-target-nstep",
+        type=int,
+        default=0,
+        help=(
+            "bootstrap self-play value targets from the frozen starting "
+            "net's value N recorded decisions deeper in the same game, "
+            "seat-adjusted (0 = recorded outcomes, the default); rows "
+            "within N of the end, expert rows, and the holdout keep "
+            "recorded outcomes"
         ),
     )
     ap.add_argument(
