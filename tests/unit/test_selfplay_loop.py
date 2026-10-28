@@ -764,3 +764,35 @@ def test_expert_mix_frac_default_is_omitted(tmp_path: Path) -> None:
         fakes.trainer,
     )
     assert "--expert-mix-frac" not in fakes.trains[0]
+
+
+def test_value_target_nstep_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-target-nstep",
+            "4",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-target-nstep" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--value-target-nstep") + 1]
+        == "4"
+    )
+
+
+def test_value_target_nstep_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-target-nstep" not in fakes.trains[0]

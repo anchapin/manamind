@@ -18,11 +18,13 @@ from manamind.training.train_selfplay import (
     blend_value_targets,
     build_parser,
     carve_holdout,
+    carve_holdout_indexed,
     flatten,
     holdout_loss,
     kl_weights,
     load_selfplay,
     mix_expert_rows,
+    nstep_value_targets,
     reset_value_head,
     run,
     sample_source,
@@ -731,3 +733,170 @@ def test_run_default_adds_no_value_target_keys(tmp_path: Path) -> None:
     )
     assert "value_target_blend" not in meta
     assert "value_target_rows" not in meta
+
+
+def _seat_game(seed: int, seats: list) -> dict:
+    decisions = [{**PRIORITY, "seat": s} for s in seats]
+    returns = [1.0, -1.0, 1.0, -1.0][: len(seats)]
+    return {
+        "seed": seed,
+        "decisions": decisions,
+        "returns": returns,
+        "winner": 0,
+    }
+
+
+def _nstep_inputs(games: list):
+    samples = flatten(games)
+    traj = []
+    lookup = {}
+    for gi, g in enumerate(games):
+        for si, d in enumerate(g["decisions"]):
+            traj.append((gi, si))
+            lookup[(gi, si)] = d
+    return samples, traj, lookup
+
+
+def test_nstep_value_targets_default_passthrough() -> None:
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1, 0])])
+    assert nstep_value_targets(net, samples, traj, lookup, 0) is None
+
+
+def test_nstep_value_targets_rejects_traj_mismatch() -> None:
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1])])
+    with pytest.raises(ValueError):
+        nstep_value_targets(net, samples, traj[:-1], lookup, 1)
+
+
+def test_nstep_value_targets_bootstraps_and_sign_flips() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    games = [_seat_game(0, [0, 0, 1, 1])]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = nstep_value_targets(net, samples, traj, lookup, 2)
+    assert out is not None
+    bootstrapped, meta = out
+    frozen = copy.deepcopy(net).eval()
+    with torch.no_grad():
+        v2 = float(frozen.distill(lookup[(0, 2)]).value)
+        v3 = float(frozen.distill(lookup[(0, 3)]).value)
+    assert bootstrapped[0][1] == pytest.approx(-v2, abs=1e-6)
+    assert bootstrapped[1][1] == pytest.approx(-v3, abs=1e-6)
+    assert bootstrapped[2][1] == 1.0
+    assert bootstrapped[3][1] == -1.0
+    assert meta["value_target_nstep"] == 2
+    assert meta["value_target_rows"] == 2
+    assert meta["value_target_terminal_rows"] == 2
+    assert meta["value_target_seat_unknown"] == 0
+
+
+def test_nstep_value_targets_same_seat_keeps_sign() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    games = [_seat_game(0, [0, 0, 0, 0])]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = nstep_value_targets(net, samples, traj, lookup, 1)
+    assert out is not None
+    bootstrapped, meta = out
+    frozen = copy.deepcopy(net).eval()
+    with torch.no_grad():
+        v1 = float(frozen.distill(lookup[(0, 1)]).value)
+    assert bootstrapped[0][1] == pytest.approx(v1, abs=1e-6)
+    assert meta["value_target_rows"] == 3
+    assert meta["value_target_terminal_rows"] == 1
+    assert meta["value_target_seat_unknown"] == 0
+
+
+def test_nstep_value_targets_unknown_seat_keeps_outcome() -> None:
+    net = ForgePointerNet()
+    games = [
+        {
+            "seed": 0,
+            "decisions": [
+                {**PRIORITY, "seat": 0},
+                {**ATTACK, "pi": [0.9, 0.2]},
+                {**PRIORITY, "seat": 1},
+            ],
+            "returns": [1.0, -1.0, 1.0],
+            "winner": 0,
+        }
+    ]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = nstep_value_targets(net, samples, traj, lookup, 1)
+    assert out is not None
+    bootstrapped, meta = out
+    assert bootstrapped[0][1] == 1.0
+    assert bootstrapped[1][1] == -1.0
+    assert bootstrapped[2][1] == 1.0
+    assert meta["value_target_rows"] == 0
+    assert meta["value_target_terminal_rows"] == 1
+    assert meta["value_target_seat_unknown"] == 2
+
+
+def test_nstep_value_targets_keeps_expert_rows() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    games = [
+        {
+            "seed": 0,
+            "decisions": [
+                {**PRIORITY, "seat": 0, "source": "expert"},
+                {**PRIORITY, "seat": 0, "source": "expert"},
+            ],
+            "returns": [1.0, -1.0],
+            "winner": 0,
+        }
+    ]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = nstep_value_targets(net, samples, traj, lookup, 1)
+    assert out is not None
+    bootstrapped, meta = out
+    assert bootstrapped[0][1] == 1.0
+    assert bootstrapped[1][1] == -1.0
+    assert meta["value_target_rows"] == 0
+
+
+def test_run_nstep_targets_and_holdout_outcomes(tmp_path: Path) -> None:
+    rows = [json.dumps(_seat_game(s, [0, 1, 0, 1])) + "\n" for s in range(6)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-target-nstep",
+                "2",
+            ]
+        )
+    )
+    assert meta["value_target_nstep"] == 2
+    assert meta["value_target_rows"] == 12
+    assert meta["value_target_terminal_rows"] == 12
+    assert meta["value_target_seat_unknown"] == 0
+
+
+def test_run_default_omits_nstep_keys(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(["--data", str(data), "--out", str(out)])
+    )
+    assert "value_target_nstep" not in meta
+    assert "value_target_rows" not in meta
+
+
+def test_carve_holdout_indexed_matches_carve_holdout() -> None:
+    samples = [(dict(PRIORITY), float(i)) for i in range(20)]
+    train, holdout = carve_holdout(samples, 0.2, 7)
+    train_i, holdout_i, idx = carve_holdout_indexed(samples, 0.2, 7)
+    assert train == train_i and holdout == holdout_i
+    assert [samples[i] for i in idx] == train_i

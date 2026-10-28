@@ -304,6 +304,13 @@ def value_source_flags(args: argparse.Namespace) -> List[str]:
     return ["--value-source", args.value_source]
 
 
+def value_nstep_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-target-nstep to train_selfplay (#96)."""
+    if args.value_target_nstep <= 0:
+        return []
+    return ["--value-target-nstep", str(args.value_target_nstep)]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -401,6 +408,7 @@ def run_round(
         + value_coef_flags(args)
         + value_target_flags(args)
         + value_source_flags(args)
+        + value_nstep_flags(args)
         + mix_flags(args)
     )
     gate_path = cand / "gate.json"
@@ -590,6 +598,7 @@ def run_fork_round(
             + value_coef_flags(args)
             + value_target_flags(args)
             + value_source_flags(args)
+            + value_nstep_flags(args)
             + mix_flags(args)
         )
         gate_path = cand / "gate.json"
@@ -799,6 +808,14 @@ def build_parser() -> argparse.ArgumentParser:
         "(manamind#96)",
     )
     ap.add_argument(
+        "--value-target-nstep",
+        type=int,
+        default=0,
+        help="forward --value-target-nstep to train_selfplay: bootstrap "
+        "self-play value targets from the frozen starting net's value N "
+        "decisions deeper in the same game, seat-adjusted (manamind#96)",
+    )
+    ap.add_argument(
         "--anchor-games",
         type=int,
         default=0,
@@ -879,6 +896,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--expert-games must be 0 or positive")
     if not 0 <= args.value_target_blend < 1.0:
         raise SystemExit("--value-target-blend must be 0 or below 1.0")
+    if args.value_target_nstep < 0:
+        raise SystemExit("--value-target-nstep must be 0 or positive")
     if args.kl_eps < 0:
         raise SystemExit("--kl-eps must be non-negative")
     if args.c_scale is not None and not args.c_scale > 0:
