@@ -19,7 +19,15 @@ import copy
 import re
 import zlib
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -190,14 +198,12 @@ class ForgePointerNet(nn.Module):
             self.matchup_value_heads = nn.ModuleList(
                 [copy.deepcopy(self.value_head) for _ in combos]
             )
-            self.register_buffer(
-                "value_route",
-                torch.full(
-                    (DECK_BUCKETS * DECK_BUCKETS,), -1, dtype=torch.long
-                ),
+            route = torch.full(
+                (DECK_BUCKETS * DECK_BUCKETS,), -1, dtype=torch.long
             )
             for i, (a, b) in enumerate(combos):
-                self.value_route[a * DECK_BUCKETS + b] = i
+                route[a * DECK_BUCKETS + b] = i
+            self.register_buffer("value_route", route)
 
     @staticmethod
     def _scorer(in_dim: int) -> nn.Sequential:
@@ -291,10 +297,10 @@ class ForgePointerNet(nn.Module):
         """
         if self.matchup_decks and own_bucket is not None:
             opp = 0 if opp_bucket is None else opp_bucket
-            idx = int(self.value_route[own_bucket * DECK_BUCKETS + opp])
-            head = (
-                self.matchup_value_heads[idx] if idx >= 0 else self.value_head
-            )
+            route = cast(torch.Tensor, self.value_route)
+            idx = int(route[own_bucket * DECK_BUCKETS + opp])
+            heads = cast(Any, self.matchup_value_heads)
+            head = heads[idx] if idx >= 0 else self.value_head
             return torch.tanh(head(state)).squeeze(-1)
         return torch.tanh(self.value_head(state)).squeeze(-1)
 

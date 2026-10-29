@@ -32,7 +32,7 @@ refuse a schema version they don't know.
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -91,10 +91,9 @@ def _matchup_value(
     itself; pairings outside the configured decks fall to the shared base
     head (last row).
     """
-    idx = net.value_route[
-        a["own_deck"].long() * DECK_BUCKETS + a["opp_deck"].long()
-    ]
-    heads = [*net.matchup_value_heads, net.value_head]
+    route = cast(torch.Tensor, net.value_route)
+    idx = route[a["own_deck"].long() * DECK_BUCKETS + a["opp_deck"].long()]
+    heads = [cast(Any, h) for h in net.matchup_value_heads] + [net.value_head]
     w1 = torch.stack([h[0].weight for h in heads])
     b1 = torch.stack([h[0].bias for h in heads])
     w2 = torch.stack([h[2].weight for h in heads])
