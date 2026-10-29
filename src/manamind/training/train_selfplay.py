@@ -40,6 +40,19 @@ BUFFER_GAMES = 20_000
 """Replay buffer cap from #87: the newest this many games."""
 
 
+def matchup_decks_arg(args: argparse.Namespace) -> Optional[Tuple[str, ...]]:
+    """Decks for per-matchup value heads (``--matchup-decks``), or None.
+
+    Off by default: the shared value head is unchanged.
+    """
+    names = tuple(
+        t.strip()
+        for t in str(getattr(args, "matchup_decks", "")).split(",")
+        if t.strip()
+    )
+    return names or None
+
+
 def reset_value_head(net: ForgePointerNet) -> None:
     """Re-initialize the value head, keeping the policy trunk.
 
@@ -50,6 +63,10 @@ def reset_value_head(net: ForgePointerNet) -> None:
     for module in net.value_head.modules():
         if isinstance(module, nn.Linear):
             module.reset_parameters()
+    for head in getattr(net, "matchup_value_heads", None) or ():
+        for module in head.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
 
 
 def _open(path: Path) -> Iterable[str]:
@@ -553,7 +570,15 @@ def save_checkpoint(
         {
             "network": net.state_dict(),
             "optimizer": opt.state_dict(),
-            "config": {"card_dim": net.card_dim, "state_dim": net.state_dim},
+            "config": {
+                "card_dim": net.card_dim,
+                "state_dim": net.state_dim,
+                **(
+                    {"matchup_decks": list(net.matchup_decks)}
+                    if net.matchup_decks
+                    else {}
+                ),
+            },
             "meta": meta,
         },
         tmp,
@@ -583,13 +608,14 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     value_source_meta: Dict[str, Any] = {}
     if searched is not None:
         train_samples, value_source_meta = searched
+    matchup = matchup_decks_arg(args)
     if args.init is not None:
-        net, prev = load_pointer_net(str(args.init))
+        net, prev = load_pointer_net(str(args.init), matchup_decks=matchup)
         parent_games = int((prev or {}).get("selfplay_games_total", 0))
         if args.flush_value_head:
             reset_value_head(net)
     else:
-        net, parent_games = ForgePointerNet(), 0
+        net, parent_games = ForgePointerNet(matchup_decks=matchup), 0
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
     if args.value_target_nstep > 0 and args.flush_value_head:
         raise ValueError(
@@ -722,6 +748,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             batch=args.batch,
             value_coef=args.value_coef,
         )
+    if net.matchup_decks:
+        meta["matchup_decks"] = list(net.matchup_decks)
+        meta["matchup_value_heads"] = len(net.matchup_value_heads)
     save_checkpoint(net, opt, args.out, meta)
     if args.onnx:
         from manamind.models.forge_pointer_onnx import export
@@ -837,6 +866,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-initialize the value head after loading --init",
     )
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--matchup-decks",
+        default="",
+        help="comma-separated deck names for per-matchup value heads"
+        " (#96 deck identity v2); empty keeps the shared value head",
+    )
     ap.add_argument(
         "--onnx", action="store_true", help="also export forge_pointer.onnx"
     )
