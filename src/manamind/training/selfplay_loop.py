@@ -311,6 +311,15 @@ def value_nstep_flags(args: argparse.Namespace) -> List[str]:
     return ["--value-target-nstep", str(args.value_target_nstep)]
 
 
+def matchup_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --matchup-value-heads to train_selfplay (#96)."""
+    if not args.matchup_value_heads:
+        return []
+    if not (args.deck_a and args.deck_b):
+        raise SystemExit("--matchup-value-heads needs --deck-a and --deck-b")
+    return ["--matchup-decks", f"{args.deck_a},{args.deck_b}"]
+
+
 def run_round(
     args: argparse.Namespace,
     state: Dict[str, Any],
@@ -409,6 +418,7 @@ def run_round(
         + value_target_flags(args)
         + value_source_flags(args)
         + value_nstep_flags(args)
+        + matchup_flags(args)
         + mix_flags(args)
     )
     gate_path = cand / "gate.json"
@@ -599,6 +609,7 @@ def run_fork_round(
             + value_target_flags(args)
             + value_source_flags(args)
             + value_nstep_flags(args)
+        + matchup_flags(args)
             + mix_flags(args)
         )
         gate_path = cand / "gate.json"
@@ -838,6 +849,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--deck-b", default=None, help="e.g. green (#2614); default midrange"
+    )
+    ap.add_argument(
+        "--matchup-value-heads",
+        action="store_true",
+        help="per-(own, opponent)-deck value heads (#96 deck identity v2);"
+        " forwards --matchup-decks to train_selfplay",
     )
     ap.add_argument(
         "--pick",

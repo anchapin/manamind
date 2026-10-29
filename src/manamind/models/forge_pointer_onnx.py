@@ -81,6 +81,33 @@ OUTPUT_NAMES = ("value", "priority", "attack", "block")
 Inputs = Dict[str, np.ndarray]
 
 
+def _matchup_value(
+    net: ForgePointerNet, state: torch.Tensor, a: Dict[str, torch.Tensor]
+) -> torch.Tensor:
+    """Routed value through the per-matchup heads (trace/ONNX friendly).
+
+    Stacks every head's weights and gathers the row the (own, opponent)
+    deck pairing selects, so the exported graph carries the routing
+    itself; pairings outside the configured decks fall to the shared base
+    head (last row).
+    """
+    idx = net.value_route[
+        a["own_deck"].long() * DECK_BUCKETS + a["opp_deck"].long()
+    ]
+    heads = [*net.matchup_value_heads, net.value_head]
+    w1 = torch.stack([h[0].weight for h in heads])
+    b1 = torch.stack([h[0].bias for h in heads])
+    w2 = torch.stack([h[2].weight for h in heads])
+    b2 = torch.stack([h[2].bias for h in heads])
+    w1s = w1.index_select(0, idx).squeeze(0)
+    b1s = b1.index_select(0, idx).squeeze(0)
+    w2s = w2.index_select(0, idx).squeeze(0)
+    b2s = b2.index_select(0, idx).squeeze(0)
+    hidden = torch.relu(state.unsqueeze(0) @ w1s.t() + b1s)
+    out = hidden @ w2s.t() + b2s
+    return torch.tanh(out).squeeze(-1)
+
+
 class PointerExport(nn.Module):
     """Tensor-in, tensor-out wrapper around a ``ForgePointerNet``."""
 
@@ -123,7 +150,10 @@ class PointerExport(nn.Module):
                 ]
             )
         )
-        value = torch.tanh(net.value_head(state))
+        if net.matchup_decks:
+            value = _matchup_value(net, state, a)
+        else:
+            value = torch.tanh(net.value_head(state))
 
         pri = net.option_proj(
             torch.cat(
@@ -258,6 +288,7 @@ def schema(net: ForgePointerNet) -> Dict[str, Any]:
         "deck_dim": DECK_DIM,
         "deck_hash": "0 unknown; else 1 + crc32(deck.lower() utf-8) % 255",
         "deck_fields": ["deck", "opp_deck"],
+        "value_head_routing": "matchup" if net.matchup_decks else "shared",
         "type_words": list(TYPE_WORDS),
         "pips": list(PIPS),
         "phases": list(PHASES),

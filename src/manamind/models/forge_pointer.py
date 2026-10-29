@@ -15,6 +15,7 @@ Only player-visible information is used (#22).
 
 from __future__ import annotations
 
+import copy
 import re
 import zlib
 from dataclasses import dataclass
@@ -140,7 +141,12 @@ class ActOutput:
 class ForgePointerNet(nn.Module):
     """Card/state encoder with pointer policy heads and a value head."""
 
-    def __init__(self, card_dim: int = 64, state_dim: int = 128) -> None:
+    def __init__(
+        self,
+        card_dim: int = 64,
+        state_dim: int = 128,
+        matchup_decks: Optional[Sequence[str]] = None,
+    ) -> None:
         super().__init__()
         self.card_dim = card_dim
         self.state_dim = state_dim
@@ -172,6 +178,26 @@ class ForgePointerNet(nn.Module):
         self.value_head = nn.Sequential(
             nn.Linear(state_dim, 64), nn.ReLU(), nn.Linear(64, 1)
         )
+        # Per-matchup value heads (manamind #96, deck identity v2): one
+        # value head per (own, opponent) deck pairing among the configured
+        # decks, each an exact copy of the base head at init so a shared-
+        # head checkpoint loads bit-identically. Empty (default) leaves
+        # the module byte-identical to the shared-head net.
+        self.matchup_decks: Tuple[str, ...] = tuple(matchup_decks or ())
+        if self.matchup_decks:
+            buckets = [deck_bucket(n) for n in self.matchup_decks]
+            combos = [(a, b) for a in buckets for b in buckets]
+            self.matchup_value_heads = nn.ModuleList(
+                [copy.deepcopy(self.value_head) for _ in combos]
+            )
+            self.register_buffer(
+                "value_route",
+                torch.full(
+                    (DECK_BUCKETS * DECK_BUCKETS,), -1, dtype=torch.long
+                ),
+            )
+            for i, (a, b) in enumerate(combos):
+                self.value_route[a * DECK_BUCKETS + b] = i
 
     @staticmethod
     def _scorer(in_dim: int) -> nn.Sequential:
@@ -245,8 +271,33 @@ class ForgePointerNet(nn.Module):
         return state
 
     # -- heads ------------------------------------------------------------
-    def value(self, state: torch.Tensor) -> torch.Tensor:
-        """Scalar value in [-1, 1] from the piped seat's view."""
+    def deck_ids(self, d: Decision) -> Tuple[int, int]:
+        """Hash buckets for the decision's own and opponent deck."""
+        own = deck_bucket(str(d["deck"])) if d.get("deck") else 0
+        opp = deck_bucket(str(d["opp_deck"])) if d.get("opp_deck") else 0
+        return own, opp
+
+    def value(
+        self,
+        state: torch.Tensor,
+        own_bucket: Optional[int] = None,
+        opp_bucket: Optional[int] = None,
+    ) -> torch.Tensor:
+        """Scalar value in [-1, 1] from the piped seat's view.
+
+        With matchup heads on, the (own, opponent) deck pairing picks the
+        head; pairings outside the configured decks fall to the shared
+        base head, as do decisions with no deck recorded.
+        """
+        if self.matchup_decks and own_bucket is not None:
+            opp = 0 if opp_bucket is None else opp_bucket
+            idx = int(self.value_route[own_bucket * DECK_BUCKETS + opp])
+            head = (
+                self.matchup_value_heads[idx]
+                if idx >= 0
+                else self.value_head
+            )
+            return torch.tanh(head(state)).squeeze(-1)
         return torch.tanh(self.value_head(state)).squeeze(-1)
 
     def priority_logits(
@@ -308,11 +359,23 @@ class ForgePointerNet(nn.Module):
         )
         return torch.cat([hit, none], dim=1)
 
+    def refresh_matchup_heads(self) -> None:
+        """Re-copy the base value head into every matchup head.
+
+        Used after loading a shared-head checkpoint into a matchup net
+        (bit-identical start) and after a value-head reset.
+        """
+        if not self.matchup_decks:
+            return
+        for head in self.matchup_value_heads:
+            head.load_state_dict(self.value_head.state_dict())
+
     # -- acting -----------------------------------------------------------
     def act(self, d: Decision, greedy: bool = False) -> ActOutput:
         """Pick a reply for one ForgeEnv decision."""
         state = self.encode_state(d)
-        value = self.value(state)
+        own, opp = self.deck_ids(d)
+        value = self.value(state, own, opp)
         t = d.get("t")
         if t == "priority":
             options = d.get("options", [])
@@ -369,7 +432,8 @@ class ForgePointerNet(nn.Module):
         ``choice`` is False when there was only one legal reply.
         """
         state = self.encode_state(d)
-        value = self.value(state)
+        own, opp = self.deck_ids(d)
+        value = self.value(state, own, opp)
         t = d.get("t")
         expert = d.get("expert")
         none = ImitateOutput(_zero(state), value, False, False, False)
@@ -426,7 +490,8 @@ class ForgePointerNet(nn.Module):
         target is missing or doesn't match the decision's shape.
         """
         state = self.encode_state(d)
-        value = self.value(state)
+        own, opp = self.deck_ids(d)
+        value = self.value(state, own, opp)
         t = d.get("t")
         pi = d.get("pi")
         none = DistillOutput(_zero(state), value, False)
@@ -653,17 +718,32 @@ def actor_critic_loss(
     return loss, stats
 
 
-def load_pointer_net(path: str) -> Tuple[ForgePointerNet, Optional[dict]]:
+def load_pointer_net(
+    path: str, matchup_decks: Optional[Sequence[str]] = None
+) -> Tuple[ForgePointerNet, Optional[dict]]:
     """Load a checkpoint written by ``train_forge``.
 
     Checkpoints written before the deck-identity inputs (manamind #96) carry
     a narrower ``state_mlp`` input projection and no ``deck_emb``; their
     projection columns are zero-padded and the zero-initialized deck
     embeddings are left at zero, so the loaded net is exactly the v1 net at
-    step 0.
+    step 0. Loading a shared-head checkpoint into a matchup net
+    (``matchup_decks`` given here, or carried in the checkpoint config)
+    re-copies the loaded base value head into every matchup head, so the
+    routed net starts exactly where the shared-head net left off.
     """
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
-    net = ForgePointerNet(**ckpt.get("config", {}))
+    config = dict(ckpt.get("config", {}))
+    decks = (
+        tuple(matchup_decks)
+        if matchup_decks is not None
+        else tuple(config.get("matchup_decks") or ())
+    )
+    if decks:
+        config["matchup_decks"] = list(decks)
+    elif "matchup_decks" in config:
+        config.pop("matchup_decks")
+    net = ForgePointerNet(**config)
     state = dict(ckpt["network"])
     w = state.get("state_mlp.0.weight")
     proj = net.state_mlp[0]
@@ -679,8 +759,13 @@ def load_pointer_net(path: str) -> Tuple[ForgePointerNet, Optional[dict]]:
         pad = torch.zeros(w.shape[0], 2 * DECK_DIM)
         state["state_mlp.0.weight"] = torch.cat([w, pad], dim=1)
     loaded = net.load_state_dict(state, strict=False)
+    if net.matchup_decks and not any(
+        k.startswith("matchup_value_heads.") for k in state
+    ):
+        net.refresh_matchup_heads()
+    allowed = ("deck_emb.", "matchup_value_heads.", "value_route")
     bad_missing = [
-        k for k in loaded.missing_keys if not k.startswith("deck_emb.")
+        k for k in loaded.missing_keys if not k.startswith(allowed)
     ]
     if bad_missing or loaded.unexpected_keys:
         # Surface the real mismatch instead of a silently partial load.
