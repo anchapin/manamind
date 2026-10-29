@@ -609,7 +609,7 @@ def run_fork_round(
             + value_target_flags(args)
             + value_source_flags(args)
             + value_nstep_flags(args)
-        + matchup_flags(args)
+            + matchup_flags(args)
             + mix_flags(args)
         )
         gate_path = cand / "gate.json"

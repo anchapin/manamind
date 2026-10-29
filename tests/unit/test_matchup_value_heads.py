@@ -98,7 +98,9 @@ def test_v1_checkpoint_loads_bit_identical(tmp_path):
         own, opp = net.deck_ids(d)
         plain_state = plain.encode_state(d)
         assert torch.equal(net.encode_state(d), plain_state)
-        assert torch.equal(net.value(state, own, opp), plain.value(plain_state))
+        assert torch.equal(
+            net.value(state, own, opp), plain.value(plain_state)
+        )
 
 
 def test_matchup_checkpoint_resume_from_config(tmp_path):
@@ -119,9 +121,7 @@ def test_matchup_checkpoint_resume_from_config(tmp_path):
     net2, _ = load_pointer_net(str(path))
     assert net2.matchup_decks == ("red", "green")
     d = decision()
-    assert torch.equal(
-        net2.encode_state(d), net.encode_state(d)
-    )
+    assert torch.equal(net2.encode_state(d), net.encode_state(d))
     own, opp = net.deck_ids(d)
     assert torch.equal(
         net2.value(net2.encode_state(d), own, opp),

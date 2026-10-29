@@ -293,9 +293,7 @@ class ForgePointerNet(nn.Module):
             opp = 0 if opp_bucket is None else opp_bucket
             idx = int(self.value_route[own_bucket * DECK_BUCKETS + opp])
             head = (
-                self.matchup_value_heads[idx]
-                if idx >= 0
-                else self.value_head
+                self.matchup_value_heads[idx] if idx >= 0 else self.value_head
             )
             return torch.tanh(head(state)).squeeze(-1)
         return torch.tanh(self.value_head(state)).squeeze(-1)
@@ -764,9 +762,7 @@ def load_pointer_net(
     ):
         net.refresh_matchup_heads()
     allowed = ("deck_emb.", "matchup_value_heads.", "value_route")
-    bad_missing = [
-        k for k in loaded.missing_keys if not k.startswith(allowed)
-    ]
+    bad_missing = [k for k in loaded.missing_keys if not k.startswith(allowed)]
     if bad_missing or loaded.unexpected_keys:
         # Surface the real mismatch instead of a silently partial load.
         net.load_state_dict(state, strict=True)
