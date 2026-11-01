@@ -437,6 +437,113 @@ def nstep_value_targets(
     return bootstrapped, meta
 
 
+def td_lambda_value_targets(
+    net: ForgePointerNet,
+    samples: List[Tuple[Dict[str, Any], float]],
+    traj: Sequence[Tuple[int, int]],
+    state_lookup: Dict[Tuple[int, int], Dict[str, Any]],
+    lam: float,
+) -> Optional[Tuple[List[Tuple[Dict[str, Any], float]], Dict[str, Any]]]:
+    """Blend each self-play row's value target along its trajectory (#96).
+
+    The TD(lam) value-target lever: the fixed single horizon of
+    ``--value-target-nstep`` (nst1) and the same-state blend of
+    ``--value-target-blend`` (vt1) are the two tested points of the
+    trajectory-target family, both negative on gates. The forward view
+    spans every horizon at once: with ``0 < lam < 1`` each self-play
+    row's target becomes the lambda-weighted average of the frozen
+    starting net's seat-adjusted values at every later state of its own
+    game, plus the recorded outcome ``z`` re-entering at geometric
+    weight ``lam ** m`` where ``m`` is the row's distance to the game's
+    final decision:
+
+        G = (1 - lam) * sum_n lam^(n-1) * V_adj(s_{t+n}) + lam^m * z
+
+    ``V`` reads from the deciding seat, so cross-seat states flip sign.
+    Late rows stay outcome-anchored (where outcomes are most
+    predictable), early rows lean on the net's own smoothed trajectory
+    read instead of one arbitrary snapshot: the lower-variance answer
+    to the self-play labels the value head cannot fit (vc4). ``lam``
+    near 1 recovers recorded outcomes and ``lam`` near 0 one-step
+    bootstrapping, so the flag spans the family between the two tested
+    points. Expert rows keep real outcomes and the holdout keeps
+    recorded outcomes, so holdout metrics stay comparable across runs.
+    Rows whose seat or any future seat is unknown keep ``z`` and are
+    counted, as do rows with nothing deeper in their game. Each state's
+    value is evaluated once (states recur as futures of many rows).
+    Runs before ``blend_value_targets``, so ``--value-target-blend``
+    blends toward ``V(s)`` on top. Do not combine with
+    ``--flush-value-head`` (a reset value head has nothing to bootstrap
+    from) or with ``--value-target-nstep`` (both rewrite the same
+    targets). Returns ``(new_samples, meta)``; ``None`` when
+    ``lam <= 0`` so the default path stays byte-identical.
+    """
+    if lam <= 0:
+        return None
+    if lam >= 1.0:
+        raise ValueError(
+            "--value-td-lambda must be below 1.0: lambda 1 is the recorded"
+            " outcome itself, so leave the flag off"
+        )
+    if len(traj) != len(samples):
+        raise ValueError("traj length must match samples")
+    game_rows: Dict[int, List[Tuple[int, Dict[str, Any]]]] = {}
+    for (gi, si), row in state_lookup.items():
+        game_rows.setdefault(gi, []).append((si, row))
+    for grows in game_rows.values():
+        grows.sort()
+    frozen = copy.deepcopy(net).eval()
+    values: Dict[int, float] = {}
+    with torch.no_grad():
+        for row in state_lookup.values():
+            if id(row) in values:
+                continue
+            values[id(row)] = float(frozen.distill(row).value)
+    transformed: List[Tuple[Dict[str, Any], float]] = []
+    rows = 0
+    terminal = 0
+    unknown = 0
+    z_weight_sum = 0.0
+    for (d, z), (gi, si) in zip(samples, traj):
+        if sample_source(d) == "expert":
+            transformed.append((d, z))
+            continue
+        seat = d.get("seat")
+        futures = (
+            [row for s, row in game_rows.get(gi, ()) if s > si]
+            if seat is not None
+            else []
+        )
+        if seat is None or any(f.get("seat") is None for f in futures):
+            transformed.append((d, z))
+            unknown += 1
+            continue
+        if not futures:
+            transformed.append((d, z))
+            terminal += 1
+            continue
+        target = 0.0
+        for n, f in enumerate(futures, start=1):
+            v = values[id(f)]
+            target += (
+                (1.0 - lam) * lam ** (n - 1) * (v if f["seat"] == seat else -v)
+            )
+        target += lam ** len(futures) * z
+        transformed.append((d, target))
+        rows += 1
+        z_weight_sum += lam ** len(futures)
+    meta = {
+        "value_td_lambda": lam,
+        "value_td_rows": rows,
+        "value_td_terminal_rows": terminal,
+        "value_td_seat_unknown": unknown,
+        "value_td_mean_z_weight": (
+            round(z_weight_sum / rows, 5) if rows else 0.0
+        ),
+    }
+    return transformed, meta
+
+
 HOLDOUT_FRAC = 0.1
 """Default fraction of decisions carved out as a fixed holdout (#96)."""
 
@@ -594,7 +701,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     samples = flatten(games)
     traj: List[Tuple[int, int]] = []
     state_lookup: Dict[Tuple[int, int], Dict[str, Any]] = {}
-    if args.value_target_nstep > 0:
+    if args.value_target_nstep > 0 or args.value_td_lambda > 0:
         for gi, game in enumerate(games):
             for si, decision in enumerate(game["decisions"]):
                 traj.append((gi, si))
@@ -622,6 +729,16 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "--flush-value-head resets the value head the n-step targets"
             " bootstrap from; drop one of the two"
         )
+    if args.value_td_lambda > 0 and args.flush_value_head:
+        raise ValueError(
+            "--flush-value-head resets the value head the TD(lam) targets"
+            " bootstrap from; drop one of the two"
+        )
+    if args.value_td_lambda > 0 and args.value_target_nstep > 0:
+        raise ValueError(
+            "--value-target-nstep and --value-td-lambda both rewrite the"
+            " self-play value targets; set one"
+        )
     value_nstep_meta: Dict[str, Any] = {}
     if args.value_target_nstep > 0:
         nstepped = nstep_value_targets(
@@ -633,6 +750,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         )
         if nstepped is not None:
             train_samples, value_nstep_meta = nstepped
+    value_td_meta: Dict[str, Any] = {}
+    if args.value_td_lambda > 0:
+        td = td_lambda_value_targets(
+            net,
+            train_samples,
+            [traj[i] for i in train_idx],
+            state_lookup,
+            args.value_td_lambda,
+        )
+        if td is not None:
+            train_samples, value_td_meta = td
     weights: Optional[List[float]] = None
     if args.kl_weighted:
         weights = kl_weights(net, train_samples, eps=args.kl_eps)
@@ -681,6 +809,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         **mix_meta,
         **value_source_meta,
         **value_nstep_meta,
+        **value_td_meta,
         **value_blend_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
@@ -811,6 +940,19 @@ def build_parser() -> argparse.ArgumentParser:
             "seat-adjusted (0 = recorded outcomes, the default); rows "
             "within N of the end, expert rows, and the holdout keep "
             "recorded outcomes"
+        ),
+    )
+    ap.add_argument(
+        "--value-td-lambda",
+        type=float,
+        default=0.0,
+        help=(
+            "TD(lam) self-play value targets: each row trains toward the "
+            "lambda-weighted forward-view return over the frozen starting "
+            "net's seat-adjusted values along its own trajectory, with the "
+            "recorded outcome re-entering at weight lambda ** (decisions "
+            "left in the game) (0 = recorded outcomes, the default); "
+            "expert rows and the holdout keep recorded outcomes"
         ),
     )
     ap.add_argument(

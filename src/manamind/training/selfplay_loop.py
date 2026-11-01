@@ -311,6 +311,13 @@ def value_nstep_flags(args: argparse.Namespace) -> List[str]:
     return ["--value-target-nstep", str(args.value_target_nstep)]
 
 
+def value_td_flags(args: argparse.Namespace) -> List[str]:
+    """Forward --value-td-lambda to train_selfplay (#96)."""
+    if args.value_td_lambda <= 0:
+        return []
+    return ["--value-td-lambda", str(args.value_td_lambda)]
+
+
 def matchup_flags(args: argparse.Namespace) -> List[str]:
     """Forward --matchup-value-heads to train_selfplay (#96)."""
     if not args.matchup_value_heads:
@@ -418,6 +425,7 @@ def run_round(
         + value_target_flags(args)
         + value_source_flags(args)
         + value_nstep_flags(args)
+        + value_td_flags(args)
         + matchup_flags(args)
         + mix_flags(args)
     )
@@ -609,6 +617,7 @@ def run_fork_round(
             + value_target_flags(args)
             + value_source_flags(args)
             + value_nstep_flags(args)
+            + value_td_flags(args)
             + matchup_flags(args)
             + mix_flags(args)
         )
@@ -827,6 +836,14 @@ def build_parser() -> argparse.ArgumentParser:
         "decisions deeper in the same game, seat-adjusted (manamind#96)",
     )
     ap.add_argument(
+        "--value-td-lambda",
+        type=float,
+        default=0.0,
+        help="forward --value-td-lambda to train_selfplay: TD(lam) value "
+        "targets over each row's own trajectory, the recorded outcome "
+        "re-entering at geometric weight (manamind#96)",
+    )
+    ap.add_argument(
         "--anchor-games",
         type=int,
         default=0,
@@ -915,6 +932,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--value-target-blend must be 0 or below 1.0")
     if args.value_target_nstep < 0:
         raise SystemExit("--value-target-nstep must be 0 or positive")
+    if args.value_td_lambda < 0 or args.value_td_lambda >= 1.0:
+        raise SystemExit("--value-td-lambda must be 0 or below 1.0")
+    if args.value_td_lambda > 0 and args.value_target_nstep > 0:
+        raise SystemExit(
+            "--value-target-nstep and --value-td-lambda are exclusive"
+        )
     if args.kl_eps < 0:
         raise SystemExit("--kl-eps must be non-negative")
     if args.c_scale is not None and not args.c_scale > 0:

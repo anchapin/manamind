@@ -29,6 +29,7 @@ from manamind.training.train_selfplay import (
     run,
     sample_source,
     search_value_targets,
+    td_lambda_value_targets,
     train_epochs,
 )
 
@@ -892,6 +893,188 @@ def test_run_default_omits_nstep_keys(tmp_path: Path) -> None:
     )
     assert "value_target_nstep" not in meta
     assert "value_target_rows" not in meta
+
+
+def test_td_lambda_value_targets_default_passthrough() -> None:
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1, 0])])
+    assert td_lambda_value_targets(net, samples, traj, lookup, 0.0) is None
+
+
+def test_td_lambda_value_targets_rejects_full_lambda() -> None:
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1, 0])])
+    with pytest.raises(ValueError):
+        td_lambda_value_targets(net, samples, traj, lookup, 1.0)
+
+
+def test_td_lambda_value_targets_rejects_traj_mismatch() -> None:
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1])])
+    with pytest.raises(ValueError):
+        td_lambda_value_targets(net, samples, traj[:-1], lookup, 0.5)
+
+
+def test_td_lambda_value_targets_forward_view() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    samples, traj, lookup = _nstep_inputs([_seat_game(0, [0, 1, 0, 1])])
+    out = td_lambda_value_targets(net, samples, traj, lookup, 0.5)
+    assert out is not None
+    transformed, meta = out
+    frozen = copy.deepcopy(net).eval()
+    with torch.no_grad():
+        v1 = float(frozen.distill(lookup[(0, 1)]).value)
+        v2 = float(frozen.distill(lookup[(0, 2)]).value)
+        v3 = float(frozen.distill(lookup[(0, 3)]).value)
+    # seats [0, 1, 0, 1], returns [1, -1, 1, -1]; cross-seat states flip sign
+    assert transformed[0][1] == pytest.approx(
+        0.5 * (-v1) + 0.25 * v2 + 0.125 * (-v3) + 0.125 * 1.0, abs=1e-9
+    )
+    assert transformed[1][1] == pytest.approx(
+        0.5 * (-v2) + 0.25 * v3 + 0.25 * (-1.0), abs=1e-9
+    )
+    assert transformed[2][1] == pytest.approx(
+        0.5 * (-v3) + 0.5 * 1.0, abs=1e-9
+    )
+    assert transformed[3][1] == -1.0
+    assert meta["value_td_lambda"] == 0.5
+    assert meta["value_td_rows"] == 3
+    assert meta["value_td_terminal_rows"] == 1
+    assert meta["value_td_seat_unknown"] == 0
+    assert meta["value_td_mean_z_weight"] == pytest.approx(0.29167, abs=1e-5)
+
+
+def test_td_lambda_value_targets_small_lambda_matches_nstep_one() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    games = [_seat_game(0, [0, 0, 1, 1])]
+    samples, traj, lookup = _nstep_inputs(games)
+    td = td_lambda_value_targets(net, samples, traj, lookup, 1e-12)
+    ns = nstep_value_targets(net, samples, traj, lookup, 1)
+    assert td is not None and ns is not None
+    td_rows, td_meta = td
+    ns_rows, ns_meta = ns
+    assert len(td_rows) == len(ns_rows)
+    for (_, a), (_, b) in zip(td_rows, ns_rows):
+        assert a == pytest.approx(b, abs=1e-9)
+    assert td_meta["value_td_rows"] == ns_meta["value_target_rows"]
+
+
+def test_td_lambda_value_targets_unknown_seat_keeps_outcome() -> None:
+    net = ForgePointerNet()
+    games = [
+        {
+            "seed": 0,
+            "decisions": [
+                {**PRIORITY, "seat": 0},
+                {**ATTACK},
+                {**PRIORITY, "seat": 1},
+            ],
+            "returns": [1.0, -1.0, 1.0],
+            "winner": 0,
+        }
+    ]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = td_lambda_value_targets(net, samples, traj, lookup, 0.5)
+    assert out is not None
+    transformed, meta = out
+    assert transformed[0][1] == 1.0
+    assert transformed[1][1] == -1.0
+    assert transformed[2][1] == 1.0
+    assert meta["value_td_rows"] == 0
+    assert meta["value_td_terminal_rows"] == 1
+    assert meta["value_td_seat_unknown"] == 2
+
+
+def test_td_lambda_value_targets_keeps_expert_rows() -> None:
+    torch.manual_seed(0)
+    net = ForgePointerNet()
+    games = [
+        {
+            "seed": 0,
+            "decisions": [
+                {**PRIORITY, "seat": 0, "source": "expert"},
+                {**PRIORITY, "seat": 0, "source": "expert"},
+            ],
+            "returns": [1.0, -1.0],
+            "winner": 0,
+        }
+    ]
+    samples, traj, lookup = _nstep_inputs(games)
+    out = td_lambda_value_targets(net, samples, traj, lookup, 0.5)
+    assert out is not None
+    transformed, meta = out
+    assert transformed[0][1] == 1.0
+    assert transformed[1][1] == -1.0
+    assert meta["value_td_rows"] == 0
+    assert meta["value_td_terminal_rows"] == 0
+
+
+def test_run_td_targets_and_holdout_outcomes(tmp_path: Path) -> None:
+    rows = [json.dumps(_seat_game(s, [0, 1, 0, 1])) + "\n" for s in range(6)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-td-lambda",
+                "0.5",
+            ]
+        )
+    )
+    assert meta["value_td_lambda"] == 0.5
+    assert meta["value_td_rows"] == 18
+    assert meta["value_td_terminal_rows"] == 6
+    assert meta["value_td_seat_unknown"] == 0
+
+
+def test_run_default_omits_td_keys(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(["--data", str(data), "--out", str(out)])
+    )
+    assert "value_td_lambda" not in meta
+    assert "value_td_rows" not in meta
+
+
+def test_run_rejects_td_with_nstep(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    with pytest.raises(ValueError):
+        run(
+            build_parser().parse_args(
+                [
+                    "--data",
+                    str(data),
+                    "--out",
+                    str(out),
+                    "--value-target-nstep",
+                    "2",
+                    "--value-td-lambda",
+                    "0.5",
+                ]
+            )
+        )
+
+
+def test_parser_td_lambda_default_and_roundtrip() -> None:
+    args = build_parser().parse_args(["--data", "d", "--out", "o"])
+    assert args.value_td_lambda == 0.0
+    args = build_parser().parse_args(
+        ["--data", "d", "--out", "o", "--value-td-lambda", "0.7"]
+    )
+    assert args.value_td_lambda == 0.7
 
 
 def test_carve_holdout_indexed_matches_carve_holdout() -> None:
