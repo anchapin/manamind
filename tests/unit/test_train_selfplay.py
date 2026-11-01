@@ -1083,3 +1083,153 @@ def test_carve_holdout_indexed_matches_carve_holdout() -> None:
     train_i, holdout_i, idx = carve_holdout_indexed(samples, 0.2, 7)
     assert train == train_i and holdout == holdout_i
     assert [samples[i] for i in idx] == train_i
+
+
+def test_run_td_refresh_rebuilds_against_current_net(tmp_path: Path) -> None:
+    rows = [json.dumps(_seat_game(s, [0, 1, 0, 1])) + "\n" for s in range(6)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    out = tmp_path / "round1"
+    meta = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(out),
+                "--holdout-frac",
+                "0",
+                "--value-td-lambda",
+                "0.5",
+                "--value-td-refresh",
+                "1",
+                "--epochs",
+                "2",
+            ]
+        )
+    )
+    assert meta["value_td_refresh"] == 1
+    assert meta["value_td_refreshes"] == 1
+    assert len(meta["value_td_drifts"]) == 1
+    assert meta["value_td_drifts"][0] > 0.0
+    assert len(meta["history"]) == 2
+
+
+def test_run_td_refresh_zero_matches_frozen(tmp_path: Path) -> None:
+    rows = [json.dumps(_seat_game(s, [0, 1, 0, 1])) + "\n" for s in range(6)]
+    data = tmp_path / "round0.jsonl"
+    data.write_text("".join(rows))
+    frozen = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "a"),
+                "--holdout-frac",
+                "0",
+                "--value-td-lambda",
+                "0.5",
+            ]
+        )
+    )
+    explicit = run(
+        build_parser().parse_args(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(tmp_path / "b"),
+                "--holdout-frac",
+                "0",
+                "--value-td-lambda",
+                "0.5",
+                "--value-td-refresh",
+                "0",
+            ]
+        )
+    )
+    frozen = {k: v for k, v in frozen.items() if k != "secs"}
+    explicit = {k: v for k, v in explicit.items() if k != "secs"}
+    assert frozen == explicit
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--value-target-blend", "0.3"),
+        ("--expert-mix-frac", "0.3"),
+        ("--value-source", "search"),
+    ],
+)
+def test_run_rejects_td_refresh_conflicts(
+    tmp_path: Path, extra: tuple
+) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    with pytest.raises(ValueError):
+        run(
+            build_parser().parse_args(
+                [
+                    "--data",
+                    str(data),
+                    "--out",
+                    str(out),
+                    "--value-td-lambda",
+                    "0.5",
+                    "--value-td-refresh",
+                    "1",
+                    *extra,
+                ]
+            )
+        )
+
+
+def test_run_rejects_td_refresh_without_lambda(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    with pytest.raises(ValueError):
+        run(
+            build_parser().parse_args(
+                [
+                    "--data",
+                    str(data),
+                    "--out",
+                    str(out),
+                    "--value-td-refresh",
+                    "1",
+                ]
+            )
+        )
+
+
+def test_run_rejects_negative_td_refresh(tmp_path: Path) -> None:
+    data = tmp_path / "round0.jsonl"
+    data.write_text(json.dumps(_game(0)) + "\n")
+    out = tmp_path / "round1"
+    with pytest.raises(ValueError):
+        run(
+            build_parser().parse_args(
+                [
+                    "--data",
+                    str(data),
+                    "--out",
+                    str(out),
+                    "--value-td-lambda",
+                    "0.5",
+                    "--value-td-refresh",
+                    "-1",
+                ]
+            )
+        )
+
+
+def test_parser_td_refresh_default_and_roundtrip() -> None:
+    args = build_parser().parse_args(["--data", "d", "--out", "o"])
+    assert args.value_td_refresh == 0
+    args = build_parser().parse_args(
+        ["--data", "d", "--out", "o", "--value-td-refresh", "2"]
+    )
+    assert args.value_td_refresh == 2
