@@ -312,10 +312,13 @@ def value_nstep_flags(args: argparse.Namespace) -> List[str]:
 
 
 def value_td_flags(args: argparse.Namespace) -> List[str]:
-    """Forward --value-td-lambda to train_selfplay (#96)."""
+    """Forward --value-td-lambda/--value-td-refresh to train_selfplay (#96)."""
     if args.value_td_lambda <= 0:
         return []
-    return ["--value-td-lambda", str(args.value_td_lambda)]
+    flags = ["--value-td-lambda", str(args.value_td_lambda)]
+    if args.value_td_refresh > 0:
+        flags += ["--value-td-refresh", str(args.value_td_refresh)]
+    return flags
 
 
 def matchup_flags(args: argparse.Namespace) -> List[str]:
@@ -844,6 +847,14 @@ def build_parser() -> argparse.ArgumentParser:
         "re-entering at geometric weight (manamind#96)",
     )
     ap.add_argument(
+        "--value-td-refresh",
+        type=int,
+        default=0,
+        help="forward --value-td-refresh to train_selfplay: rebuild the "
+        "TD(lam) targets every N epochs against the net as it trains "
+        "(0 = frozen starting net, manamind#96)",
+    )
+    ap.add_argument(
         "--anchor-games",
         type=int,
         default=0,
@@ -934,6 +945,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--value-target-nstep must be 0 or positive")
     if args.value_td_lambda < 0 or args.value_td_lambda >= 1.0:
         raise SystemExit("--value-td-lambda must be 0 or below 1.0")
+    if args.value_td_refresh < 0:
+        raise SystemExit(
+            "--value-td-refresh must be 0 or a positive epoch count"
+        )
     if args.value_td_lambda > 0 and args.value_target_nstep > 0:
         raise SystemExit(
             "--value-target-nstep and --value-td-lambda are exclusive"

@@ -739,6 +739,29 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "--value-target-nstep and --value-td-lambda both rewrite the"
             " self-play value targets; set one"
         )
+    if args.value_td_refresh < 0:
+        raise ValueError(
+            "--value-td-refresh must be 0 or a positive epoch count"
+        )
+    if args.value_td_refresh > 0 and args.value_td_lambda <= 0:
+        raise ValueError("--value-td-refresh needs --value-td-lambda")
+    if args.value_td_refresh > 0 and args.value_target_blend > 0:
+        raise ValueError(
+            "--value-td-refresh rebuilds self-play value targets"
+            " mid-training; --value-target-blend would have to re-run at"
+            " every refresh; set one"
+        )
+    if args.value_td_refresh > 0 and args.expert_mix_frac > 0:
+        raise ValueError(
+            "--value-td-refresh rebuilds the self-play sample list"
+            " mid-training; --expert-mix-frac inserts rows and would"
+            " misalign it; set one"
+        )
+    if args.value_td_refresh > 0 and args.value_source == "search":
+        raise ValueError(
+            "--value-td-refresh rebuilds targets from recorded outcomes;"
+            " --value-source search rewrites them first; set one"
+        )
     value_nstep_meta: Dict[str, Any] = {}
     if args.value_target_nstep > 0:
         nstepped = nstep_value_targets(
@@ -751,7 +774,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         if nstepped is not None:
             train_samples, value_nstep_meta = nstepped
     value_td_meta: Dict[str, Any] = {}
+    td_base: Optional[List[Tuple[Dict[str, Any], float]]] = None
     if args.value_td_lambda > 0:
+        td_base = train_samples
         td = td_lambda_value_targets(
             net,
             train_samples,
@@ -783,17 +808,55 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         train_samples, value_blend_meta = blended
     t0 = time.time()
     history: List[Dict[str, Any]] = []
-    stats = train_epochs(
-        net,
-        opt,
-        train_samples,
-        epochs=args.epochs,
-        batch=args.batch,
-        value_coef=args.value_coef,
-        seed=args.seed,
-        log=history,
-        weights=weights,
-    )
+    value_td_refreshes = 0
+    value_td_drifts: List[float] = []
+    stats: Dict[str, float] = {}
+    epochs_left = args.epochs
+    while epochs_left > 0:
+        seg = (
+            min(args.value_td_refresh, epochs_left)
+            if args.value_td_refresh > 0
+            else epochs_left
+        )
+        if args.value_td_refresh > 0 and epochs_left < args.epochs:
+            rebuild_base = td_base if td_base is not None else train_samples
+            refreshed = td_lambda_value_targets(
+                net,
+                rebuild_base,
+                [traj[i] for i in train_idx],
+                state_lookup,
+                args.value_td_lambda,
+            )
+            if refreshed is not None:
+                new_samples, _ = refreshed
+                diffs = [
+                    abs(nt - ot)
+                    for (nd, nt), (_od, ot) in zip(new_samples, train_samples)
+                    if sample_source(nd) != "expert"
+                ]
+                if diffs:
+                    value_td_drifts.append(round(sum(diffs) / len(diffs), 5))
+                train_samples = new_samples
+                value_td_refreshes += 1
+        stats = train_epochs(
+            net,
+            opt,
+            train_samples,
+            epochs=seg,
+            batch=args.batch,
+            value_coef=args.value_coef,
+            seed=args.seed + (args.epochs - epochs_left),
+            log=history,
+            weights=weights,
+        )
+        epochs_left -= seg
+    value_td_online_meta: Dict[str, Any] = {}
+    if args.value_td_refresh > 0:
+        value_td_online_meta = {
+            "value_td_refresh": args.value_td_refresh,
+            "value_td_refreshes": value_td_refreshes,
+            "value_td_drifts": value_td_drifts,
+        }
     meta: Dict[str, Any] = {
         "phase": "selfplay",
         "init": str(args.init) if args.init is not None else None,
@@ -811,6 +874,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         **value_nstep_meta,
         **value_td_meta,
         **value_blend_meta,
+        **value_td_online_meta,
         "expert_samples": sum(
             1 for d, _ in train_samples if sample_source(d) == "expert"
         ),
@@ -953,6 +1017,19 @@ def build_parser() -> argparse.ArgumentParser:
             "recorded outcome re-entering at weight lambda ** (decisions "
             "left in the game) (0 = recorded outcomes, the default); "
             "expert rows and the holdout keep recorded outcomes"
+        ),
+    )
+    ap.add_argument(
+        "--value-td-refresh",
+        type=int,
+        default=0,
+        help=(
+            "rebuild the TD(lam) self-play value targets against the net"
+            " as it trains: every N epochs, recompute values with a frozen"
+            " copy of the current net and rebuild from the recorded"
+            " outcomes (0 = the round's starting net, the default); needs"
+            " --value-td-lambda; exclusive with --value-target-blend,"
+            " --expert-mix-frac and --value-source search"
         ),
     )
     ap.add_argument(

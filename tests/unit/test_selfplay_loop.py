@@ -848,3 +848,64 @@ def test_value_td_lambda_and_nstep_rejected_together(tmp_path: Path) -> None:
                 "2",
             ]
         )
+
+
+def test_value_td_refresh_forwards_to_train(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-td-lambda",
+            "0.5",
+            "--value-td-refresh",
+            "1",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-td-refresh" in fakes.trains[0]
+    assert (
+        fakes.trains[0][fakes.trains[0].index("--value-td-refresh") + 1] == "1"
+    )
+
+
+def test_value_td_refresh_default_is_omitted(tmp_path: Path) -> None:
+    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
+    run(
+        args(
+            tmp_path,
+            "--rounds",
+            "3",
+            "--flat-rounds",
+            "2",
+            "--value-td-lambda",
+            "0.7",
+        ),
+        fakes.runner,
+        fakes.trainer,
+    )
+    assert "--value-td-refresh" not in fakes.trains[0]
+
+
+def test_value_td_refresh_negative_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--run-dir",
+                str(tmp_path),
+                "--pn-dir",
+                str(tmp_path),
+                "--rounds",
+                "3",
+                "--flat-rounds",
+                "2",
+                "--value-td-lambda",
+                "0.7",
+                "--value-td-refresh",
+                "-1",
+            ]
+        )
