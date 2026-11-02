@@ -162,6 +162,27 @@ def bc_epochs(
     return out
 
 
+_DEFAULT_NET_DIMS = {"card_dim": 64, "state_dim": 128}
+
+
+def net_size_kwargs(
+    card_dim: Optional[int], state_dim: Optional[int]
+) -> Dict[str, int]:
+    """Build width overrides for a fresh ``ForgePointerNet``.
+
+    ``None`` keeps the constructor default (card_dim 64, state_dim 128);
+    a value below 1 is rejected so a bad flag cannot train a degenerate net.
+    """
+    kwargs: Dict[str, int] = {}
+    for name, value in (("card_dim", card_dim), ("state_dim", state_dim)):
+        if value is None:
+            continue
+        if value < 1:
+            raise ValueError(f"--{name.replace('_', '-')} must be >= 1")
+        kwargs[name] = value
+    return kwargs
+
+
 def train(
     command: Sequence[str],
     cwd: Optional[Path],
@@ -179,6 +200,8 @@ def train(
     expert_games: int = 0,
     bc_epoch_count: int = 0,
     bc_batch: int = 256,
+    card_dim: Optional[int] = None,
+    state_dim: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run ``games`` games, updating every ``update_every`` games.
 
@@ -188,12 +211,29 @@ def train(
     a long run that dies can be resumed with ``--resume``.
     """
     torch.manual_seed(seed)
-    net = ForgePointerNet()
+    net_kwargs = net_size_kwargs(card_dim, state_dim)
+    net = ForgePointerNet(
+        card_dim=int(
+            net_kwargs.get("card_dim", _DEFAULT_NET_DIMS["card_dim"])
+        ),
+        state_dim=int(
+            net_kwargs.get("state_dim", _DEFAULT_NET_DIMS["state_dim"])
+        ),
+    )
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     start_game = 0
     bc_done = False
     if resume is not None:
         ckpt = torch.load(resume, map_location="cpu", weights_only=False)
+        cfg = ckpt.get("config", {})
+        for name in ("card_dim", "state_dim"):
+            want = net_kwargs.get(name, _DEFAULT_NET_DIMS[name])
+            have = int(cfg.get(name, _DEFAULT_NET_DIMS[name]))
+            if want != have:
+                raise ValueError(
+                    f"--{name.replace('_', '-')} {want} does not match the"
+                    f" --resume checkpoint ({have})"
+                )
         net.load_state_dict(ckpt["network"])
         opt.load_state_dict(ckpt["optimizer"])
         start_game = int(ckpt["meta"]["games"])
@@ -501,6 +541,18 @@ def main() -> None:
     )
     ap.add_argument("--bc-batch", type=int, default=256)
     ap.add_argument(
+        "--card-dim",
+        type=int,
+        default=None,
+        help="card encoder width for a fresh net (default 64)",
+    )
+    ap.add_argument(
+        "--state-dim",
+        type=int,
+        default=None,
+        help="state encoder width for a fresh net (default 128)",
+    )
+    ap.add_argument(
         "--eval-ckpts",
         help="comma list of checkpoints to score instead of training; "
         "relative paths resolve against the parent of --out",
@@ -563,6 +615,8 @@ def main() -> None:
         expert_games=args.expert_games,
         bc_epoch_count=args.bc_epochs,
         bc_batch=args.bc_batch,
+        card_dim=args.card_dim,
+        state_dim=args.state_dim,
     )
     print(json.dumps(meta))
 
