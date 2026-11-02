@@ -29,6 +29,7 @@ from manamind.training.train_forge import (
     EXPERT_DATA,
     evaluate,
     load_expert_data,
+    net_size_kwargs,
     train,
 )
 
@@ -469,3 +470,28 @@ def test_deck_dim_is_the_warm_start_pad() -> None:
     assert (
         net.state_mlp[0].in_features == zones + GLOBAL_FEATURES + 2 * DECK_DIM
     )
+
+
+def test_net_size_kwargs_defaults_empty() -> None:
+    assert net_size_kwargs(None, None) == {}
+
+
+def test_net_size_kwargs_widths_flow_into_net() -> None:
+    kwargs = net_size_kwargs(96, 192)
+    assert kwargs == {"card_dim": 96, "state_dim": 192}
+    net = ForgePointerNet(**kwargs)
+    assert net.card_dim == 96
+    assert net.state_dim == 192
+
+
+def test_net_size_kwargs_single_override() -> None:
+    assert net_size_kwargs(None, 256) == {"state_dim": 256}
+    assert net_size_kwargs(32, None) == {"card_dim": 32}
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_net_size_kwargs_rejects_nonpositive(bad: int) -> None:
+    with pytest.raises(ValueError):
+        net_size_kwargs(bad, None)
+    with pytest.raises(ValueError):
+        net_size_kwargs(None, bad)
