@@ -1,8 +1,10 @@
-# Manamind #96 green-seat probe: measure the #2614 deck pair's inherent seat
-# balance with the Planar Nexus Expert AI playing itself. The candidate side
-# alternates decks (red/green within each pair) and seats (on the play by
-# pair), so the by-deck split reads expert-as-red vs expert-as-green against
-# the same expert opponent, with no model checkpoint involved. Decision rule
+# Manamind #96 green-seat probe: measure a deck pair's inherent seat balance
+# with the Planar Nexus Expert AI playing itself. The candidate side
+# alternates decks (each side within the pair) and seats (on the play by
+# pair), so the by-deck split reads the pair's own seat balance against the
+# same expert opponent, with no model checkpoint involved. Defaults to the
+# frozen #2614 pair (mono-red-aggro vs mono-green-landfall); deck_file /
+# deck_a / deck_b select a different pair from a planar-nexus deck file. Decision rule
 # from the green-seat proposal: expert-as-green near parity means the pair is
 # balanced and the ladder's green-seat weakness is model-side; expert-as-green
 # collapsing the way the model's reads do (0.115-0.155 vs red 0.777-0.800)
@@ -24,6 +26,15 @@ on:
       issue:
         description: issue to post the readout on (blank or 0 skips)
         default: "96"
+      deck_file:
+        description: deck file in planar-nexus scripts/data/decks (blank = 2614-decks.json)
+        default: ""
+      deck_a:
+        description: first deck key (blank = mono-red-aggro)
+        default: ""
+      deck_b:
+        description: second deck key (blank = mono-green-landfall)
+        default: ""
 
 permissions:
   contents: read
@@ -42,6 +53,9 @@ jobs:
       SEED: ${{ github.event.inputs.seed }}
       ISSUE: ${{ github.event.inputs.issue }}
       PN_REF: ${{ github.event.inputs.pn_ref }}
+      DECK_FILE: ${{ github.event.inputs.deck_file }}
+      DECK_A: ${{ github.event.inputs.deck_a }}
+      DECK_B: ${{ github.event.inputs.deck_b }}
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
       NODE_OPTIONS: "--max-old-space-size=2048"
@@ -57,6 +71,9 @@ jobs:
           [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 && $((GAMES % 2)) -eq 0 ]] || { echo "bad games (positive even number)"; exit 1; }
           [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "bad seed"; exit 1; }
           [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
+          [[ -z "$DECK_FILE" || ("$DECK_FILE" =~ ^[A-Za-z0-9._-]+$ && "$DECK_FILE" == *.json) ]] || { echo "bad deck_file"; exit 1; }
+          [[ "$DECK_A" =~ ^[A-Za-z0-9_-]*$ && "$DECK_B" =~ ^[A-Za-z0-9_-]*$ ]] || { echo "bad deck_a/deck_b"; exit 1; }
+          if [ -n "$DECK_FILE" ] && { [ -z "$DECK_A" ] || [ -z "$DECK_B" ]; }; then echo "deck_file needs deck_a and deck_b"; exit 1; fi
 
       - uses: actions/setup-node@v4
         with:
@@ -78,9 +95,11 @@ jobs:
           set -o pipefail
           OUT="$GITHUB_WORKSPACE/results/expert_balance_${GITHUB_RUN_ID}"
           mkdir -p "$OUT"
+          DECK_ARGS=""
+          if [ -n "$DECK_FILE" ]; then DECK_ARGS="$DECK_ARGS --decks-file $DECK_FILE --deck-a $DECK_A --deck-b $DECK_B"; fi
           ( cd pn && npx tsx scripts/yardstick-pn.ts \
               --agent expert \
-              --games "$GAMES" --seed "$SEED" \
+              --games "$GAMES" --seed "$SEED" $DECK_ARGS \
               --out "$OUT/measure.json" ) 2>&1 \
             | grep -v '^\(DEBUG\|INFO\)' | tail -n 300 | tee "$OUT/measure.log"
           [ -f "$OUT/measure.json" ] || { echo "expert balance read produced no result"; exit 1; }
@@ -106,6 +125,8 @@ jobs:
               r = json.load(f)
 
           by_deck = r.get("byDeck") or {}
+          deck_names = [k for k in by_deck if any(by_deck[k].get(x) for x in ("win", "loss", "draw"))]
+          pair = r.get("decks", "the configured deck pair")
 
           def row(label, d):
               n = d.get("win", 0) + d.get("loss", 0) + d.get("draw", 0)
@@ -118,7 +139,7 @@ jobs:
           lines = [
               "**Expert balance (expert-vs-expert)**",
               "",
-              f"Planar Nexus Expert AI plays itself on the #2614 pair, decks "
+              f"Planar Nexus Expert AI plays itself on {pair}, decks "
               f"and seats alternating, {r.get('games', '?')} games. No "
               "model checkpoint involved: this measures the pair's own seat "
               "balance. Overall score sits at 0.5 when the pair is balanced.",
@@ -126,9 +147,11 @@ jobs:
               "| Measure | Score | W-L-D / games |",
               "|---|---:|---:|",
               row("expert overall", r),
-              row("expert as red", by_deck.get("red") or {}),
-              row("expert as green", by_deck.get("green") or {}),
           ]
+          if len(deck_names) >= 2:
+              lines.append(row(f"expert as {deck_names[0]}", by_deck[deck_names[0]]))
+              lines.append(row(f"expert as {deck_names[1]}", by_deck[deck_names[1]]))
+
           lines = [l for l in lines if l is not None]
 
           ci = r.get("ci95") or r.get("ci")
