@@ -1,1 +1,422 @@
-IiIiUHJlZGljdGlvbi1ndWlkZWQgbW92ZSBzZWxlY3Rpb24gc3Bpa2UgKCMxMDYpLgoKVGhyZWUgbW9kZXMsIGFsbCBldmFsLW9ubHkgKG5vIHRyYWluaW5nKToKCmBgY29sbGVjdGBgCiAgICBQbGF5IGdhbWVzIHdpdGggYSBjaGVja3BvaW50LCBzbmFwc2hvdCBtaWQtZ2FtZSBkZWNpc2lvbnMsIGFuZCBmb3IgZWFjaAogICAgb25lIHNjb3JlIHRoZSBzZWFyY2gncyB0b3AgY2FuZGlkYXRlIG1vdmVzIGJ5IHRoZSB2YWx1ZSBoZWFkIGFwcGxpZWQgdG8KICAgIGVuZ2luZS1zaW11bGF0ZWQgc3VjY2Vzc29yIHN0YXRlcy4gVGhlIHJ1bGVzIGVuZ2luZSBpcyB0aGUgd29ybGQgbW9kZWw6CiAgICBhcHBseWluZyBhIGNhbmRpZGF0ZSBpcyBleGFjdCwgc28gdGhlIHByZWRpY3RvciBvbmx5IGhhcyB0byBzY29yZSB0aGUKICAgIHN1Y2Nlc3Nvci4gUm93cyBsYW5kIGluIGEgSlNPTkwgZmlsZSB3aXRoIHRoZSBldmVudHVhbCBnYW1lIG91dGNvbWUKICAgIGJhY2tmaWxsZWQsIHdoaWNoIG1ha2VzIHRoZSByZXRyb3NwZWN0aXZlIHF1ZXN0aW9uIGFuc3dlcmFibGUgb2ZmbGluZToKICAgIGRvZXMgdGhlIHZhbHVlIGhlYWQncyBmYXZvdXJpdGUgZGlzYWdyZWUgd2l0aCB0aGUgcG9saWN5J3MsIGFuZCBkb2VzCiAgICB0aGF0IGRpc2FncmVlbWVudCB0cmFjayB3aG8gYWN0dWFsbHkgd29uPwoKYGBhbmFseXplYGAKICAgIFN1bW1hcmlzZSBhIHNuYXBzaG90cyBKU09OTDogb3ZlcnJpZGUgcmF0ZSwgd2luIHJhdGUgc3BsaXQgYnkgd2hldGhlcgogICAgdGhlIHZhbHVlIGhlYWQncyBiZXN0IG1vdmUgd2FzIHRoZSBvbmUgcGxheWVkLCBhbmQgbWVhbiByZWdyZXQKICAgICh2YWx1ZS1iZXN0IG1pbnVzIHZhbHVlLWNob3NlbikuCgpgYGgyaGBgCiAgICBQbGF5IGEgcmUtcmFua2luZyBhZ2VudCAodGhlIGNoZWNrcG9pbnQncyBvd24gc2VhcmNoIHByb3Bvc2VzIHRoZSB0b3AtawogICAgY2FuZGlkYXRlczsgdGhlIHZhbHVlIGhlYWQgcGlja3MgYW1vbmcgdGhlbSkgYWdhaW5zdCB0aGUgcGxhaW4gc2VhcmNoCiAgICBhZ2VudCwgcGFpcmVkIGRlYWxzIHdpdGggc2VhdHMgc3dhcHBlZCwgZ3JlZWR5LgoKVmFsdWUgY29udmVudGlvbjogdGhlIHNpbXBsZS1tb2RlIHZhbHVlIGhlYWQgaXMgdHJhaW5lZCBmcm9tIHRoZSBwcmlvcml0eQpwbGF5ZXIncyBwZXJzcGVjdGl2ZSBvbiB0aGF0IHBsYXllcidzIG9ic2VydmF0aW9uLCBhbmQgdGhlIHNpbXBsZSBlbmNvZGVyCm9ubHkgcmVhZHMgcHVibGljIHBlci1wbGF5ZXIgZmVhdHVyZXMsIHNvIGVuY29kaW5nIGEgZnVsbCBzdGF0ZSBpcyB0aGUgc2FtZQp2ZWN0b3IgYXMgZW5jb2RpbmcgaXRzIG9ic2VydmF0aW9uLiBGb3IgYSBzdWNjZXNzb3Igc3RhdGUgcycgdGhlIG1vdmVyJ3MKdmFsdWUgaXMgdihzJykgaWYgcycucHJpb3JpdHlfcGxheWVyID09IG1vdmVyIGVsc2UgLXYocycpLCBhbmQgZXhhY3RseQorMS8tMS8wIGZvciB0ZXJtaW5hbCBzdWNjZXNzb3JzLgoiIiIKCmZyb20gX19mdXR1cmVfXyBpbXBvcnQgYW5ub3RhdGlvbnMKCmltcG9ydCBhcmdwYXJzZQppbXBvcnQganNvbgppbXBvcnQgc3lzCmltcG9ydCB0aW1lCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApmcm9tIHR5cGluZyBpbXBvcnQgQW55LCBEaWN0LCBMaXN0LCBPcHRpb25hbCwgVHVwbGUKCnN5cy5wYXRoLmluc2VydCgwLCBzdHIoUGF0aChfX2ZpbGVfXykucmVzb2x2ZSgpLnBhcmVudCkpCgpmcm9tIHRyYWluX3NpbXBsZSBpbXBvcnQgKCAgIyBub3FhOiBFNDAyLCBGNDAxCiAgICBNQVhfU1RFUFMsCiAgICBsb2FkX2NoZWNrcG9pbnQsCikKZnJvbSB0cmFpbl9zaW1wbGUgaW1wb3J0IHBsYXlfZ2FtZSBhcyBfcGxheV9nYW1lICAjIG5vcWE6IEU0MDIKZnJvbSB0cmFpbl9zaW1wbGUgaW1wb3J0IHNlZWRfZXZlcnl0aGluZyAgIyBub3FhOiBFNDAyCgpmcm9tIG1hbmFtaW5kLmNvcmUuYWdlbnQgaW1wb3J0IEFnZW50LCBNQ1RTQWdlbnQgICMgbm9xYTogRTQwMgpmcm9tIG1hbmFtaW5kLmNvcmUuZ2FtZV9zdGF0ZSBpbXBvcnQgR2FtZVN0YXRlICAjIG5vcWE6IEU0MDIKZnJvbSBtYW5hbWluZC5jb3JlLm9ic2VydmF0aW9uIGltcG9ydCBvYnNlcnZlICAjIG5vcWE6IEU0MDIKZnJvbSBtYW5hbWluZC5ydWxlcy5zaW1wbGUgaW1wb3J0IGNyZWF0ZV9zaW1wbGVfZ2FtZV9zdGFydCAgIyBub3FhOiBFNDAyCgoKZGVmIGFjdGlvbl9rZXkoYWN0aW9uOiBBbnkpIC0+IHN0cjoKICAgICIiIkNvbXBhY3QgaWRlbnRpdHkgZm9yIGEgY2FuZGlkYXRlIGFjdGlvbiB3aXRoaW4gb25lIHNuYXBzaG90LiIiIgogICAga2luZCA9IGdldGF0dHIoZ2V0YXR0cihhY3Rpb24sICJhY3Rpb25fdHlwZSIsIE5vbmUpLCAidmFsdWUiLCBOb25lKQogICAgaWYga2luZCBpcyBOb25lOgogICAgICAgIHJldHVybiBzdHIoYWN0aW9uKQogICAgY2FyZCA9IGdldGF0dHIoYWN0aW9uLCAiY2FyZCIsIE5vbmUpCiAgICBuYW1lID0gZ2V0YXR0cihjYXJkLCAibmFtZSIsIE5vbmUpIGlmIGNhcmQgaXMgbm90IE5vbmUgZWxzZSBOb25lCiAgICBwYXJ0cyA9IFtraW5kXQogICAgaWYgbmFtZToKICAgICAgICBwYXJ0cy5hcHBlbmQoc3RyKG5hbWUpKQogICAgcmV0dXJuICI6Ii5qb2luKHBhcnRzKQoKCmRlZiBtb3Zlcl92YWx1ZShuZXQ6IEFueSwgc3VjY2Vzc29yOiBHYW1lU3RhdGUsIG1vdmVyOiBpbnQpIC0+IGZsb2F0OgogICAgIiIiVmFsdWUgb2YgYGBzdWNjZXNzb3JgYCBmb3IgdGhlIHBsYXllciB3aG8ganVzdCBtb3ZlZCwgaW4gWy0xLCAxXS4iIiIKICAgIGlmIHN1Y2Nlc3Nvci5pc19nYW1lX292ZXIoKToKICAgICAgICB3aW5uZXIgPSBzdWNjZXNzb3Iud2lubmVyKCkKICAgICAgICBpZiB3aW5uZXIgaXMgTm9uZToKICAgICAgICAgICAgcmV0dXJuIDAuMAogICAgICAgIHJldHVybiAxLjAgaWYgd2lubmVyID09IG1vdmVyIGVsc2UgLTEuMAogICAgd2l0aCBfX2ltcG9ydF9fKCJ0b3JjaCIpLm5vX2dyYWQoKToKICAgICAgICB2YWx1ZSA9IGZsb2F0KG5ldC5ldmFsdWF0ZV9wb3NpdGlvbihzdWNjZXNzb3IpLmZsYXR0ZW4oKVswXSkKICAgIHRvX21vdmUgPSBzdWNjZXNzb3IucHJpb3JpdHlfcGxheWVyCiAgICByZXR1cm4gdmFsdWUgaWYgdG9fbW92ZSA9PSBtb3ZlciBlbHNlIC12YWx1ZQoKCmRlZiBzY29yZV9jYW5kaWRhdGVzKAogICAgbmV0OiBBbnksIHN0YXRlOiBHYW1lU3RhdGUsIG1vdmVyOiBpbnQsIGNhbmRpZGF0ZXM6IExpc3RbVHVwbGVbQW55LCBpbnRdXQopIC0+IExpc3RbRGljdFtzdHIsIEFueV1dOgogICAgIiIiRW5naW5lLWFwcGx5IGVhY2ggY2FuZGlkYXRlIG9uIGEgY29weSBhbmQgdmFsdWUtc2NvcmUgdGhlIHN1Y2Nlc3Nvci4iIiIKICAgIHNjb3JlZDogTGlzdFtEaWN0W3N0ciwgQW55XV0gPSBbXQogICAgZm9yIGNhbmRfYWN0aW9uLCB2aXNpdHMgaW4gY2FuZGlkYXRlczoKICAgICAgICBzdWNjZXNzb3IgPSBzdGF0ZS5jb3B5KCkKICAgICAgICBzdWNjZXNzb3IgPSBjYW5kX2FjdGlvbi5leGVjdXRlKHN1Y2Nlc3NvcikKICAgICAgICBzY29yZWQuYXBwZW5kKAogICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAiYWN0aW9uIjogYWN0aW9uX2tleShjYW5kX2FjdGlvbiksCiAgICAgICAgICAgICAgICAidmlzaXRzIjogdmlzaXRzLAogICAgICAgICAgICAgICAgInZhbHVlIjogcm91bmQobW92ZXJfdmFsdWUobmV0LCBzdWNjZXNzb3IsIG1vdmVyKSwgNiksCiAgICAgICAgICAgIH0KICAgICAgICApCiAgICByZXR1cm4gc2NvcmVkCgoKZGVmIHNlYXJjaF9jYW5kaWRhdGVzKGFnZW50OiBNQ1RTQWdlbnQsIHRvcF9rOiBpbnQpIC0+IExpc3RbVHVwbGVbQW55LCBpbnRdXToKICAgICIiIlRvcC1rIGFjdGlvbnMgZnJvbSB0aGUgYWdlbnQncyBtb3N0IHJlY2VudCByb290IHNlYXJjaCwgYnkgdmlzaXRzLiIiIgogICAgcm9vdCA9IGFnZW50Ll9sYXN0X3Jvb3QKICAgIGlmIHJvb3QgaXMgTm9uZSBvciBub3Qgcm9vdC5jaGlsZHJlbjoKICAgICAgICByZXR1cm4gW10KICAgIHBhaXJzID0gc29ydGVkKAogICAgICAgIHJvb3QuY2hpbGRyZW4sCiAgICAgICAga2V5PWxhbWJkYSBhY3Rpb25fY2hpbGQ6IGFjdGlvbl9jaGlsZFsxXS52aXNpdHMsCiAgICAgICAgcmV2ZXJzZT1UcnVlLAogICAgKQogICAgcmV0dXJuIFsoYWN0aW9uLCBjaGlsZC52aXNpdHMpIGZvciBhY3Rpb24sIGNoaWxkIGluIHBhaXJzWzp0b3Bfa11dCgoKZGVmIG1ha2VfYWdlbnQoCiAgICBuZXQ6IEFueSwgcGxheWVyX2lkOiBpbnQsIGFyZ3M6IGFyZ3BhcnNlLk5hbWVzcGFjZQopIC0+IE1DVFNBZ2VudDoKICAgIHJldHVybiBNQ1RTQWdlbnQoCiAgICAgICAgcGxheWVyX2lkPXBsYXllcl9pZCwKICAgICAgICBwb2xpY3lfbmV0d29yaz1uZXQsCiAgICAgICAgdmFsdWVfbmV0d29yaz1uZXQsCiAgICAgICAgc2ltdWxhdGlvbnM9YXJncy5zaW1zLAogICAgICAgIHNpbXVsYXRpb25fdGltZT1hcmdzLnNpbV90aW1lLAogICAgICAgIHNlYXJjaD1hcmdzLnNlYXJjaCwKICAgICAgICB0ZW1wZXJhdHVyZT0wLjAsCiAgICApCgoKZGVmIGNvbGxlY3QoYXJnczogYXJncGFyc2UuTmFtZXNwYWNlKSAtPiBOb25lOgogICAgbmV0ID0gbG9hZF9jaGVja3BvaW50KFBhdGgoYXJncy5jaGVja3BvaW50KSwgd2VpZ2h0cz1hcmdzLndlaWdodHMpCiAgICBvdXRfcGF0aCA9IFBhdGgoYXJncy5vdXQpCiAgICBvdXRfcGF0aC5wYXJlbnQubWtkaXIocGFyZW50cz1UcnVlLCBleGlzdF9vaz1UcnVlKQogICAgcm93czogTGlzdFtEaWN0W3N0ciwgQW55XV0gPSBbXQogICAgc3RhcnRlZCA9IHRpbWUudGltZSgpCiAgICBkZWNpc2lvbnMgPSAwCiAgICBmb3IgZ2FtZSBpbiByYW5nZShhcmdzLmdhbWVzKToKICAgICAgICBkZWFsID0gYXJncy5zZWVkICsgZ2FtZQogICAgICAgIHN0YXRlID0gY3JlYXRlX3NpbXBsZV9nYW1lX3N0YXJ0KGRlYWwpCiAgICAgICAgYWdlbnRzID0ge3BpZDogbWFrZV9hZ2VudChuZXQsIHBpZCwgYXJncykgZm9yIHBpZCBpbiAoMCwgMSl9CiAgICAgICAgZ2FtZV9yb3dzOiBMaXN0W0RpY3Rbc3RyLCBBbnldXSA9IFtdCiAgICAgICAgZm9yIHN0ZXAgaW4gcmFuZ2UoTUFYX1NURVBTKToKICAgICAgICAgICAgaWYgc3RhdGUuaXNfZ2FtZV9vdmVyKCk6CiAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICBhY3RvciA9IHN0YXRlLnByaW9yaXR5X3BsYXllcgogICAgICAgICAgICBhZ2VudCA9IGFnZW50c1thY3Rvcl0KICAgICAgICAgICAgc2VlbiA9IG9ic2VydmUoc3RhdGUsIGFjdG9yKQogICAgICAgICAgICBhY3Rpb24gPSBhZ2VudC5zZWxlY3RfYWN0aW9uKHNlZW4pCiAgICAgICAgICAgIGlmICgKICAgICAgICAgICAgICAgIGFnZW50Ll9sYXN0X2ZvcmNlZCBpcyBOb25lCiAgICAgICAgICAgICAgICBhbmQgYXJncy50dXJuX21pbiA8PSBzdGF0ZS50dXJuX251bWJlciA8PSBhcmdzLnR1cm5fbWF4CiAgICAgICAgICAgICk6CiAgICAgICAgICAgICAgICBjYW5kaWRhdGVzID0gc2VhcmNoX2NhbmRpZGF0ZXMoYWdlbnQsIGFyZ3MudG9wX2spCiAgICAgICAgICAgICAgICBpZiBsZW4oY2FuZGlkYXRlcykgPj0gMjoKICAgICAgICAgICAgICAgICAgICBzY29yZWQgPSBzY29yZV9jYW5kaWRhdGVzKG5ldCwgc3RhdGUsIGFjdG9yLCBjYW5kaWRhdGVzKQogICAgICAgICAgICAgICAgICAgIGJlc3QgPSBtYXgoc2NvcmVkLCBrZXk9bGFtYmRhIHJvdzogcm93WyJ2YWx1ZSJdKQogICAgICAgICAgICAgICAgICAgIGNob3Nlbl9rZXkgPSBhY3Rpb25fa2V5KGFjdGlvbikKICAgICAgICAgICAgICAgICAgICBnYW1lX3Jvd3MuYXBwZW5kKAogICAgICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiZ2FtZSI6IGdhbWUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAic2VlZCI6IGRlYWwsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAidHVybiI6IHN0YXRlLnR1cm5fbnVtYmVyLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgInN0ZXAiOiBzdGVwLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgInNlYXQiOiBhY3RvciwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICJjaG9zZW4iOiBjaG9zZW5fa2V5LAogICAgICAgICAgICAgICAgICAgICAgICAgICAgImNhbmRpZGF0ZXMiOiBzY29yZWQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAib3ZlcnJpZGUiOiBiZXN0WyJhY3Rpb24iXSAhPSBjaG9zZW5fa2V5LAogICAgICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgZGVjaXNpb25zICs9IDEKICAgICAgICAgICAgc3RhdGUgPSBhY3Rpb24uZXhlY3V0ZShzdGF0ZSkKICAgICAgICB3aW5uZXIgPSBzdGF0ZS53aW5uZXIoKQogICAgICAgIHRydW5jYXRlZCA9IG5vdCBzdGF0ZS5pc19nYW1lX292ZXIoKQogICAgICAgIGZvciByb3cgaW4gZ2FtZV9yb3dzOgogICAgICAgICAgICBpZiB0cnVuY2F0ZWQ6CiAgICAgICAgICAgICAgICByb3dbIm91dGNvbWUiXSA9IE5vbmUKICAgICAgICAgICAgZWxpZiB3aW5uZXIgaXMgTm9uZToKICAgICAgICAgICAgICAgIHJvd1sib3V0Y29tZSJdID0gMAogICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgcm93WyJvdXRjb21lIl0gPSAxIGlmIHdpbm5lciA9PSByb3dbInNlYXQiXSBlbHNlIC0xCiAgICAgICAgICAgIHJvd3MuYXBwZW5kKHJvdykKICAgIGVsYXBzZWQgPSB0aW1lLnRpbWUoKSAtIHN0YXJ0ZWQKICAgIHdpdGggb3V0X3BhdGgub3BlbigidyIpIGFzIGhhbmRsZToKICAgICAgICBmb3Igcm93IGluIHJvd3M6CiAgICAgICAgICAgIGhhbmRsZS53cml0ZShqc29uLmR1bXBzKHJvdykgKyAiXG4iKQogICAgc3VtbWFyeSA9IHsKICAgICAgICAiZ2FtZXMiOiBhcmdzLmdhbWVzLAogICAgICAgICJzaW1zIjogYXJncy5zaW1zLAogICAgICAgICJ0b3BfayI6IGFyZ3MudG9wX2ssCiAgICAgICAgImNoZWNrcG9pbnQiOiBzdHIoYXJncy5jaGVja3BvaW50KSwKICAgICAgICAiZGVjaXNpb25zIjogZGVjaXNpb25zLAogICAgICAgICJlbGFwc2VkX3NlY29uZHMiOiByb3VuZChlbGFwc2VkLCAxKSwKICAgICAgICAib3V0Ijogc3RyKG91dF9wYXRoKSwKICAgIH0KICAgIHByaW50KGpzb24uZHVtcHMoc3VtbWFyeSkpCgoKZGVmIGFuYWx5emUoYXJnczogYXJncGFyc2UuTmFtZXNwYWNlKSAtPiBOb25lOgogICAgcm93cyA9IFsKICAgICAgICBqc29uLmxvYWRzKGxpbmUpCiAgICAgICAgZm9yIGxpbmUgaW4gUGF0aChhcmdzLnNuYXBzaG90cykucmVhZF90ZXh0KCkuc3BsaXRsaW5lcygpCiAgICAgICAgaWYgbGluZS5zdHJpcCgpCiAgICBdCiAgICBkZWNpZGVkID0gW3JvdyBmb3Igcm93IGluIHJvd3MgaWYgcm93LmdldCgib3V0Y29tZSIpIGlzIG5vdCBOb25lXQogICAgb3ZlcnJpZGVzID0gW3JvdyBmb3Igcm93IGluIGRlY2lkZWQgaWYgcm93WyJvdmVycmlkZSJdXQogICAgbm9uX292ZXJyaWRlcyA9IFtyb3cgZm9yIHJvdyBpbiBkZWNpZGVkIGlmIG5vdCByb3dbIm92ZXJyaWRlIl1dCgogICAgZGVmIHdpbl9yYXRlKHNhbXBsZTogTGlzdFtEaWN0W3N0ciwgQW55XV0pIC0+IE9wdGlvbmFsW2Zsb2F0XToKICAgICAgICBpZiBub3Qgc2FtcGxlOgogICAgICAgICAgICByZXR1cm4gTm9uZQogICAgICAgIHJldHVybiBzdW0oMSBmb3Igcm93IGluIHNhbXBsZSBpZiByb3dbIm91dGNvbWUiXSA9PSAxKSAvIGxlbihzYW1wbGUpCgogICAgZGVmIG1lYW5fcmVncmV0KHNhbXBsZTogTGlzdFtEaWN0W3N0ciwgQW55XV0pIC0+IE9wdGlvbmFsW2Zsb2F0XToKICAgICAgICBpZiBub3Qgc2FtcGxlOgogICAgICAgICAgICByZXR1cm4gTm9uZQogICAgICAgIHJlZ3JldHMgPSBbXQogICAgICAgIGZvciByb3cgaW4gc2FtcGxlOgogICAgICAgICAgICB2YWx1ZXMgPSB7CiAgICAgICAgICAgICAgICBjYW5kaWRhdGVbImFjdGlvbiJdOiBjYW5kaWRhdGVbInZhbHVlIl0KICAgICAgICAgICAgICAgIGZvciBjYW5kaWRhdGUgaW4gcm93WyJjYW5kaWRhdGVzIl0KICAgICAgICAgICAgfQogICAgICAgICAgICBjaG9zZW4gPSB2YWx1ZXMuZ2V0KHJvd1siY2hvc2VuIl0pCiAgICAgICAgICAgIGlmIGNob3NlbiBpcyBOb25lOgogICAgICAgICAgICAgICAgIyBUaGUgcGxheWVkIG1vdmUgY2FuIGZhbGwgb3V0c2lkZSB0aGUgdG9wLWsgY2FuZGlkYXRlcwogICAgICAgICAgICAgICAgIyAoYSBndW1iZWwgc2VhcmNoIHBpY2tzIGJ5IGcgKyBsb2dpdHMgKyBzaWdtYShxKSwgbm90CiAgICAgICAgICAgICAgICAjIHZpc2l0cyksIGluIHdoaWNoIGNhc2UgdGhlcmUgaXMgbm8gcmVncmV0IHRvIG1lYXN1cmUuCiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBiZXN0ID0gbWF4KHZhbHVlcy52YWx1ZXMoKSkKICAgICAgICAgICAgcmVncmV0cy5hcHBlbmQoYmVzdCAtIGNob3NlbikKICAgICAgICBpZiBub3QgcmVncmV0czoKICAgICAgICAgICAgcmV0dXJuIE5vbmUKICAgICAgICByZXR1cm4gc3VtKHJlZ3JldHMpIC8gbGVuKHJlZ3JldHMpCgogICAgZGVmIGJ5X3NlYXQoc2FtcGxlOiBMaXN0W0RpY3Rbc3RyLCBBbnldXSkgLT4gRGljdFtzdHIsIEFueV06CiAgICAgICAgcmVzdWx0OiBEaWN0W3N0ciwgQW55XSA9IHt9CiAgICAgICAgZm9yIHNlYXQgaW4gKDAsIDEpOgogICAgICAgICAgICBwYXJ0ID0gW3JvdyBmb3Igcm93IGluIHNhbXBsZSBpZiByb3dbInNlYXQiXSA9PSBzZWF0XQogICAgICAgICAgICByZXN1bHRbZiJzZWF0e3NlYXR9Il0gPSB7CiAgICAgICAgICAgICAgICAibiI6IGxlbihwYXJ0KSwKICAgICAgICAgICAgICAgICJvdmVycmlkZV9yYXRlIjogKAogICAgICAgICAgICAgICAgICAgIHJvdW5kKHN1bSgxIGZvciByIGluIHBhcnQgaWYgclsib3ZlcnJpZGUiXSkgLyBsZW4ocGFydCksIDQpCiAgICAgICAgICAgICAgICAgICAgaWYgcGFydAogICAgICAgICAgICAgICAgICAgIGVsc2UgTm9uZQogICAgICAgICAgICAgICAgKSwKICAgICAgICAgICAgICAgICJ3aW5fcmF0ZSI6IHdpbl9yYXRlKHBhcnQpLAogICAgICAgICAgICB9CiAgICAgICAgcmV0dXJuIHJlc3VsdAoKICAgIHJlc3VsdCA9IHsKICAgICAgICAic25hcHNob3RzIjogc3RyKGFyZ3Muc25hcHNob3RzKSwKICAgICAgICAiZGVjaXNpb25zIjogbGVuKHJvd3MpLAogICAgICAgICJkZWNpZGVkIjogbGVuKGRlY2lkZWQpLAogICAgICAgICJvdmVycmlkZV9yYXRlIjogKAogICAgICAgICAgICByb3VuZChzdW0oMSBmb3IgciBpbiByb3dzIGlmIHJbIm92ZXJyaWRlIl0pIC8gbGVuKHJvd3MpLCA0KQogICAgICAgICAgICBpZiByb3dzCiAgICAgICAgICAgIGVsc2UgTm9uZQogICAgICAgICksCiAgICAgICAgIndpbl9yYXRlX3doZW5fdmFsdWVfYWdyZWVzIjogd2luX3JhdGUobm9uX292ZXJyaWRlcyksCiAgICAgICAgIndpbl9yYXRlX3doZW5fdmFsdWVfZGlzYWdyZWVzIjogd2luX3JhdGUob3ZlcnJpZGVzKSwKICAgICAgICAibWVhbl9yZWdyZXQiOiBtZWFuX3JlZ3JldChyb3dzKSwKICAgICAgICAiYnlfc2VhdCI6IGJ5X3NlYXQoZGVjaWRlZCksCiAgICB9CiAgICBvdXRfcGF0aCA9IFBhdGgoYXJncy5vdXQpIGlmIGFyZ3Mub3V0IGVsc2UgTm9uZQogICAgdGV4dCA9IGpzb24uZHVtcHMocmVzdWx0LCBpbmRlbnQ9MikKICAgIHByaW50KHRleHQpCiAgICBpZiBvdXRfcGF0aCBpcyBub3QgTm9uZToKICAgICAgICBvdXRfcGF0aC5wYXJlbnQubWtkaXIocGFyZW50cz1UcnVlLCBleGlzdF9vaz1UcnVlKQogICAgICAgIG91dF9wYXRoLndyaXRlX3RleHQodGV4dCArICJcbiIpCgoKY2xhc3MgUmVyYW5rQWdlbnQoQWdlbnQpOgogICAgIiIiU2VhcmNoIGZvciBjYW5kaWRhdGVzLCB0aGVuIGxldCB0aGUgdmFsdWUgaGVhZCBwaWNrIGFtb25nIHRoZW0uIiIiCgogICAgZGVmIF9faW5pdF9fKAogICAgICAgIHNlbGYsCiAgICAgICAgcGxheWVyX2lkOiBpbnQsCiAgICAgICAgbmV0OiBBbnksCiAgICAgICAgYXJnczogYXJncGFyc2UuTmFtZXNwYWNlLAogICAgKSAtPiBOb25lOgogICAgICAgIHN1cGVyKCkuX19pbml0X18ocGxheWVyX2lkKQogICAgICAgIHNlbGYuaW5uZXIgPSBtYWtlX2FnZW50KG5ldCwgcGxheWVyX2lkLCBhcmdzKQogICAgICAgIHNlbGYubmV0ID0gbmV0CiAgICAgICAgc2VsZi50b3BfayA9IGFyZ3MudG9wX2sKICAgICAgICBzZWxmLmxhc3Rfd2FzX2ZvcmNlZCA9IEZhbHNlCgogICAgZGVmIHVwZGF0ZV9mcm9tX2dhbWUoCiAgICAgICAgc2VsZiwgZ2FtZV9oaXN0b3J5OiBMaXN0W1R1cGxlW0dhbWVTdGF0ZSwgQW55LCBmbG9hdF1dCiAgICApIC0+IE5vbmU6CiAgICAgICAgIiIiTm90aGluZyB0byBsZWFybiBhdCBldmFsIHRpbWUuIiIiCgogICAgZGVmIHNlbGVjdF9hY3Rpb24oc2VsZiwgZ2FtZV9zdGF0ZTogR2FtZVN0YXRlKSAtPiBBbnk6CiAgICAgICAgYWN0aW9uID0gc2VsZi5pbm5lci5zZWxlY3RfYWN0aW9uKGdhbWVfc3RhdGUpCiAgICAgICAgaWYgc2VsZi5pbm5lci5fbGFzdF9mb3JjZWQgaXMgbm90IE5vbmU6CiAgICAgICAgICAgIHNlbGYubGFzdF93YXNfZm9yY2VkID0gVHJ1ZQogICAgICAgICAgICByZXR1cm4gYWN0aW9uCiAgICAgICAgc2VsZi5sYXN0X3dhc19mb3JjZWQgPSBGYWxzZQogICAgICAgIHJvb3QgPSBzZWxmLmlubmVyLl9sYXN0X3Jvb3QKICAgICAgICBpZiByb290IGlzIE5vbmU6CiAgICAgICAgICAgIHJldHVybiBhY3Rpb24KICAgICAgICBjYW5kaWRhdGVzID0gc2VhcmNoX2NhbmRpZGF0ZXMoc2VsZi5pbm5lciwgc2VsZi50b3BfaykKICAgICAgICBpZiBsZW4oY2FuZGlkYXRlcykgPCAyOgogICAgICAgICAgICByZXR1cm4gYWN0aW9uCiAgICAgICAgc2NvcmVkID0gc2NvcmVfY2FuZGlkYXRlcygKICAgICAgICAgICAgc2VsZi5uZXQsIHJvb3QuZ2FtZV9zdGF0ZSwgc2VsZi5wbGF5ZXJfaWQsIGNhbmRpZGF0ZXMKICAgICAgICApCiAgICAgICAgYmVzdCA9IG1heChzY29yZWQsIGtleT1sYW1iZGEgcm93OiByb3dbInZhbHVlIl0pCiAgICAgICAgZm9yIGNhbmRfYWN0aW9uLCBfIGluIGNhbmRpZGF0ZXM6CiAgICAgICAgICAgIGlmIGFjdGlvbl9rZXkoY2FuZF9hY3Rpb24pID09IGJlc3RbImFjdGlvbiJdOgogICAgICAgICAgICAgICAgcmV0dXJuIGNhbmRfYWN0aW9uCiAgICAgICAgcmV0dXJuIGFjdGlvbgoKCmRlZiBtYXRjaCgKICAgIGFfZmFjdG9yeTogQW55LAogICAgYl9mYWN0b3J5OiBBbnksCiAgICBnYW1lczogaW50LAogICAgc2VlZDogaW50LAopIC0+IERpY3Rbc3RyLCBBbnldOgogICAgIiIiUGFpcmVkLWRlYWwgbWF0Y2g6IHNhbWUgZGVhbCBib3RoIHNlYXRzLCBncmVlZHkgKHNlZSBoZWFkX3RvX2hlYWQpLiIiIgogICAgYV93aW5zID0gYl93aW5zID0gZHJhd3MgPSAwCiAgICB0dXJucyA9IDAKICAgIGZvciBnYW1lIGluIHJhbmdlKGdhbWVzKToKICAgICAgICBkZWFsID0gc2VlZCArIGdhbWUgLy8gMgogICAgICAgIGFfc2VhdCA9IGdhbWUgJSAyCiAgICAgICAgYWdlbnRzID0ge2Ffc2VhdDogYV9mYWN0b3J5KCksIDEgLSBhX3NlYXQ6IGJfZmFjdG9yeSgpfQogICAgICAgIHdpbm5lciwgZ2FtZV90dXJucywgXyA9IF9wbGF5X2dhbWUoYWdlbnRzLCBzZWVkPWRlYWwpCiAgICAgICAgdHVybnMgKz0gZ2FtZV90dXJucwogICAgICAgIGlmIHdpbm5lciBpcyBOb25lOgogICAgICAgICAgICBkcmF3cyArPSAxCiAgICAgICAgZWxpZiB3aW5uZXIgPT0gYV9zZWF0OgogICAgICAgICAgICBhX3dpbnMgKz0gMQogICAgICAgIGVsc2U6CiAgICAgICAgICAgIGJfd2lucyArPSAxCiAgICBkZWNpZGVkID0gZ2FtZXMgLSBkcmF3cwogICAgcmF0ZSA9IGFfd2lucyAvIGRlY2lkZWQgaWYgZGVjaWRlZCBlbHNlIDAuNQogICAgY2kgPSAxLjk2ICogKHJhdGUgKiAoMSAtIHJhdGUpIC8gZGVjaWRlZCkgKiogMC41IGlmIGRlY2lkZWQgZWxzZSAwLjAKICAgIHJldHVybiB7CiAgICAgICAgImFfd2lucyI6IGFfd2lucywKICAgICAgICAiYl93aW5zIjogYl93aW5zLAogICAgICAgICJkcmF3cyI6IGRyYXdzLAogICAgICAgICJhX3dpbl9yYXRlIjogcm91bmQocmF0ZSwgNCksCiAgICAgICAgImNpOTUiOiByb3VuZChjaSwgNCksCiAgICAgICAgIm1lYW5fdHVybnMiOiByb3VuZCh0dXJucyAvIGdhbWVzLCAyKSBpZiBnYW1lcyBlbHNlIE5vbmUsCiAgICB9CgoKZGVmIGgyaF9tb2RlKGFyZ3M6IGFyZ3BhcnNlLk5hbWVzcGFjZSkgLT4gTm9uZToKICAgIG5ldCA9IGxvYWRfY2hlY2twb2ludChQYXRoKGFyZ3MuY2hlY2twb2ludCksIHdlaWdodHM9YXJncy53ZWlnaHRzKQogICAgc3RhcnRlZCA9IHRpbWUudGltZSgpCiAgICByZXN1bHQgPSBtYXRjaCgKICAgICAgICBsYW1iZGE6IFJlcmFua0FnZW50KDAsIG5ldCwgYXJncyksCiAgICAgICAgbGFtYmRhOiBNQ1RTQWdlbnQoCiAgICAgICAgICAgIHBsYXllcl9pZD0xLAogICAgICAgICAgICBwb2xpY3lfbmV0d29yaz1uZXQsCiAgICAgICAgICAgIHZhbHVlX25ldHdvcms9bmV0LAogICAgICAgICAgICBzaW11bGF0aW9ucz1hcmdzLnNpbXMsCiAgICAgICAgICAgIHNpbXVsYXRpb25fdGltZT1hcmdzLnNpbV90aW1lLAogICAgICAgICAgICBzZWFyY2g9YXJncy5zZWFyY2gsCiAgICAgICAgICAgIHRlbXBlcmF0dXJlPTAuMCwKICAgICAgICApLAogICAgICAgIGdhbWVzPWFyZ3MuZ2FtZXMsCiAgICAgICAgc2VlZD1hcmdzLnNlZWQsCiAgICApCiAgICByZXN1bHQuaWQ9YXJncy5jaGVja3BvaW50LAogICAgICAgIHsKICAgICAgICAgICAgImNoZWNrcG9pbnQiOiBzdHIoYXJncy5jaGVja3BvaW50KSwKICAgICAgICAgICAgInNpbXMiOiBhcmdzLnNpbXMsCiAgICAgICAgICAgICJ0b3BfayI6IGFyZ3MudG9wX2ssCiAgICAgICAgICAgICJnYW1lcyI6IGFyZ3MuZ2FtZXMsCiAgICAgICAgICAgICJlbGFwc2VkX3NlY29uZHMiOiByb3VuZCh0aW1lLnRpbWUoKSAtIHN0YXJ0ZWQsIDEpLAogICAgICAgIH0KICAgICkKICAgIHRleHQgPSBqc29uLmR1bXBzKHJlc3VsdCwgaW5kZW50PTIpCiAgICBwcmludCh0ZXh0KQogICAgaWYgYXJncy5vdXQ6CiAgICAgICAgUGF0aChhcmdzLm91dCkucGFyZW50Lm1rZGlyKHBhcmVudHM9VHJ1ZSwgZXhpc3Rfb2s9VHJ1ZSkKICAgICAgICBQYXRoKGFyZ3Mub3V0KS53cml0ZV90ZXh0KHRleHQgKyAiXG4iKQoKCmRlZiBtYWluKCkgLT4gTm9uZToKICAgIHBhcnNlciA9IGFyZ3BhcnNlLkFyZ3VtZW50UGFyc2VyKGRlc2NyaXB0aW9uPV9fZG9jX18pCiAgICBzdWIgPSBwYXJzZXIuYWRkX3N1YnBhcnNlcnMoZGVzdD0ibW9kZSIsIHJlcXVpcmVkPVRydWUpCgogICAgY29sbGVjdF9wID0gc3ViLmFkZF9wYXJzZXIoImNvbGxlY3QiLCBoZWxwPSJzbmFwc2hvdCBkZWNpc2lvbnMgKyB2YWx1ZXMiKQogICAgY29sbGVjdF9wLmFkZF9hcmd1bWVudCgiLS1jaGVja3BvaW50IiwgcmVxdWlyZWQ9VHJ1ZSkKICAgIGNvbGxlY3RfcC5hZGRfYXJndW1lbnQoIi0td2VpZ2h0cyIsIGRlZmF1bHQ9Im5ldHdvcmsiKQogICAgY29sbGVjdF9wLmFkZF9hcmd1bWVudCgiLS1nYW1lcyIsIHR5cGU9aW50LCBkZWZhdWx0PTIwMCkKICAgIGNvbGxlY3RfcC5hZGRfYXJndW1lbnQoIi0tc2ltcyIsIHR5cGU9aW50LCBkZWZhdWx0PTMyKQogICAgY29sbGVjdF9wLmFkZF9hcmd1bWVudCgiLS1zaW0tdGltZSIsIHR5cGU9ZmxvYXQsIGRlZmF1bHQ9MzAuMCkKICAgIGNvbGxlY3RfcC5hZGRfYXJndW1lbnQoCiAgICAgICAgIi0tc2VhcmNoIiwgZGVmYXVsdD0icHVjdCIsIGNob2ljZXM9KCJwdWN0IiwgImd1bWJlbCIpCiAgICApCiAgICBjb2xsZWN0X3AuYWRkX2FyZ3VtZW50KCItLXRvcC1rIiwgdHlwZT1pbnQsIGRlZmF1bHQ9OCkKICAgIGNvbGxlY3RfcC5hZGRfYXJndW1lbnQoIi0tdHVybi1taW4iLCB0eXBlPWludCwgZGVmYXVsdD0yKQogICAgY29sbGVjdF9wLmFkZF9hcmd1bWVudCgiLS10dXJuLW1heCIsIHR5cGU9aW50LCBkZWZhdWx0PTgpCiAgICBjb2xsZWN0X3AuYWRkX2FyZ3VtZW50KCItLXNlZWQiLCB0eXBlPWludCwgZGVmYXVsdD0yMDI2MTExMCkKICAgIGNvbGxlY3RfcC5hZGRfYXJndW1lbnQoIi0tb3V0IiwgcmVxdWlyZWQ9VHJ1ZSkKICAgIGNvbGxlY3RfcC5zZXRfZGVmYXVsdHMoZnVuYz1jb2xsZWN0KQoKICAgIGFuYWx5emVfcCA9IHN1Yi5hZGRfcGFyc2VyKCJhbmFseXplIiwgaGVscD0ic3VtbWFyaXNlIGEgc25hcHNob3RzIEpTT05MIikKICAgIGFuYWx5emVfcC5hZGRfYXJndW1lbnQoIi0tc25hcHNob3RzIiwgcmVxdWlyZWQ9VHJ1ZSkKICAgIGFuYWx5emVfcC5hZGRfYXJndW1lbnQoIi0tb3V0IikKICAgIGFuYWx5emVfcC5zZXRfZGVmYXVsdHMoZnVuYz1hbmFseXplKQoKICAgIGgyaF9wID0gc3ViLmFkZF9wYXJzZXIoImgyaCIsIGhlbHA9InJlcmFuayBhZ2VudCB2cyBwbGFpbiBzZWFyY2ggYWdlbnQiKQogICAgaDJoX3AuYWRkX2FyZ3VtZW50KCItLWNoZWNrcG9pbnQiLCByZXF1aXJlZD1UcnVlKQogICAgaDJoX3AuYWRkX2FyZ3VtZW50KCItLXdlaWdodHMiLCBkZWZhdWx0PSJuZXR3b3JrIikKICAgIGgyaF9wLmFkZF9hcmd1bWVudCgiLS1nYW1lcyIsIHR5cGU9aW50LCBkZWZhdWx0PTQwMCkKICAgIGgyaF9wLmFkZF9hcmd1bWVudCgiLS1zaW1zIiwgdHlwZT1pbnQsIGRlZmF1bHQ9MzIpCiAgICBoMmhfcC5hZGRfYXJndW1lbnQoIi0tc2ltLXRpbWUiLCB0eXBlPWZsb2F0LCBkZWZhdWx0PTMwLjApCiAgICBoMmhfcC5hZGRfYXJndW1lbnQoIi0tc2VhcmNoIiwgZGVmYXVsdD0icHVjdCIsIGNob2ljZXM9KCJwdWN0IiwgImd1bWJlbCIpKQogICAgaDJoX3AuYWRkX2FyZ3VtZW50KCItLXRvcC1rIiwgdHlwZT1pbnQsIGRlZmF1bHQ9OCkKICAgIGgyaF9wLmFkZF9hcmd1bWVudCgiLS1zZWVkIiwgdHlwZT1pbnQsIGRlZmF1bHQ9MjAyNjExMTApCiAgICBoMmhfcC5hZGRfYXJndW1lbnQoIi0tb3V0IikKICAgIGgyaF9wLnNldF9kZWZhdWx0cyhmdW5jPWgyaF9tb2RlKQoKICAgIGFyZ3MgPSBwYXJzZXIucGFyc2VfYXJncygpCiAgICBpZiBnZXRhdHRyKGFyZ3MsICJzZWVkIiwgTm9uZSkgaXMgbm90IE5vbmU6CiAgICAgICAgc2VlZF9ldmVyeXRoaW5nKGFyZ3Muc2VlZCkKICAgIGFyZ3MuZnVuYyhhcmdzKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK
+"""Prediction-guided move selection spike (#106).
+
+Three modes, all eval-only (no training):
+
+``collect``
+    Play games with a checkpoint, snapshot mid-game decisions, and for each
+    one score the search's top candidate moves by the value head applied to
+    engine-simulated successor states. The rules engine is the world model:
+    applying a candidate is exact, so the predictor only has to score the
+    successor. Rows land in a JSONL file with the eventual game outcome
+    backfilled, which makes the retrospective question answerable offline:
+    does the value head's favourite disagree with the policy's, and does
+    that disagreement track who actually won?
+
+``analyze``
+    Summarise a snapshots JSONL: override rate, win rate split by whether
+    the value head's best move was the one played, and mean regret
+    (value-best minus value-chosen).
+
+``h2h``
+    Play a re-ranking agent (the checkpoint's own search proposes the top-k
+    candidates; the value head picks among them) against the plain search
+    agent, paired deals with seats swapped, greedy.
+
+Value convention: the simple-mode value head is trained from the priority
+player's perspective on that player's observation, and the simple encoder
+only reads public per-player features, so encoding a full state is the same
+vector as encoding its observation. For a successor state s' the mover's
+value is v(s') if s'.priority_player == mover else -v(s'), and exactly
++1/-1/0 for terminal successors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from train_simple import (  # noqa: E402, F401
+    MAX_STEPS,
+    load_checkpoint,
+)
+from train_simple import play_game as _play_game  # noqa: E402
+from train_simple import seed_everything  # noqa: E402
+
+from manamind.core.agent import Agent, MCTSAgent  # noqa: E402
+from manamind.core.game_state import GameState  # noqa: E402
+from manamind.core.observation import observe  # noqa: E402
+from manamind.rules.simple import create_simple_game_start  # noqa: E402
+
+
+def action_key(action: Any) -> str:
+    """Compact identity for a candidate action within one snapshot."""
+    kind = getattr(getattr(action, "action_type", None), "value", None)
+    if kind is None:
+        return str(action)
+    card = getattr(action, "card", None)
+    name = getattr(card, "name", None) if card is not None else None
+    parts = [kind]
+    if name:
+        parts.append(str(name))
+    return ":".join(parts)
+
+
+def mover_value(net: Any, successor: GameState, mover: int) -> float:
+    """Value of ``successor`` for the player who just moved, in [-1, 1]."""
+    if successor.is_game_over():
+        winner = successor.winner()
+        if winner is None:
+            return 0.0
+        return 1.0 if winner == mover else -1.0
+    with __import__("torch").no_grad():
+        value = float(net.evaluate_position(successor).flatten()[0])
+    to_move = successor.priority_player
+    return value if to_move == mover else -value
+
+
+def score_candidates(
+    net: Any, state: GameState, mover: int, candidates: List[Tuple[Any, int]]
+) -> List[Dict[str, Any]]:
+    """Engine-apply each candidate on a copy and value-score the successor."""
+    scored: List[Dict[str, Any]] = []
+    for cand_action, visits in candidates:
+        successor = state.copy()
+        successor = cand_action.execute(successor)
+        scored.append(
+            {
+                "action": action_key(cand_action),
+                "visits": visits,
+                "value": round(mover_value(net, successor, mover), 6),
+            }
+        )
+    return scored
+
+
+def search_candidates(agent: MCTSAgent, top_k: int) -> List[Tuple[Any, int]]:
+    """Top-k actions from the agent's most recent root search, by visits."""
+    root = agent._last_root
+    if root is None or not root.children:
+        return []
+    pairs = sorted(
+        root.children,
+        key=lambda action_child: action_child[1].visits,
+        reverse=True,
+    )
+    return [(action, child.visits) for action, child in pairs[:top_k]]
+
+
+def make_agent(
+    net: Any, player_id: int, args: argparse.Namespace
+) -> MCTSAgent:
+    return MCTSAgent(
+        player_id=player_id,
+        policy_network=net,
+        value_network=net,
+        simulations=args.sims,
+        simulation_time=args.sim_time,
+        search=args.search,
+        temperature=0.0,
+    )
+
+
+def collect(args: argparse.Namespace) -> None:
+    net = load_checkpoint(Path(args.checkpoint), weights=args.weights)
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    rows: List[Dict[str, Any]] = []
+    started = time.time()
+    decisions = 0
+    for game in range(args.games):
+        deal = args.seed + game
+        state = create_simple_game_start(deal)
+        agents = {pid: make_agent(net, pid, args) for pid in (0, 1)}
+        game_rows: List[Dict[str, Any]] = []
+        for step in range(MAX_STEPS):
+            if state.is_game_over():
+                break
+            actor = state.priority_player
+            agent = agents[actor]
+            seen = observe(state, actor)
+            action = agent.select_action(seen)
+            if (
+                agent._last_forced is None
+                and args.turn_min <= state.turn_number <= args.turn_max
+            ):
+                candidates = search_candidates(agent, args.top_k)
+                if len(candidates) >= 2:
+                    scored = score_candidates(net, state, actor, candidates)
+                    best = max(scored, key=lambda row: row["value"])
+                    chosen_key = action_key(action)
+                    game_rows.append(
+                        {
+                            "game": game,
+                            "seed": deal,
+                            "turn": state.turn_number,
+                            "step": step,
+                            "seat": actor,
+                            "chosen": chosen_key,
+                            "candidates": scored,
+                            "override": best["action"] != chosen_key,
+                        }
+                    )
+                    decisions += 1
+            state = action.execute(state)
+        winner = state.winner()
+        truncated = not state.is_game_over()
+        for row in game_rows:
+            if truncated:
+                row["outcome"] = None
+            elif winner is None:
+                row["outcome"] = 0
+            else:
+                row["outcome"] = 1 if winner == row["seat"] else -1
+            rows.append(row)
+    elapsed = time.time() - started
+    with out_path.open("w") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    summary = {
+        "games": args.games,
+        "sims": args.sims,
+        "top_k": args.top_k,
+        "checkpoint": str(args.checkpoint),
+        "decisions": decisions,
+        "elapsed_seconds": round(elapsed, 1),
+        "out": str(out_path),
+    }
+    print(json.dumps(summary))
+
+
+def analyze(args: argparse.Namespace) -> None:
+    rows = [
+        json.loads(line)
+        for line in Path(args.snapshots).read_text().splitlines()
+        if line.strip()
+    ]
+    decided = [row for row in rows if row.get("outcome") is not None]
+    overrides = [row for row in decided if row["override"]]
+    non_overrides = [row for row in decided if not row["override"]]
+
+    def win_rate(sample: List[Dict[str, Any]]) -> Optional[float]:
+        if not sample:
+            return None
+        return sum(1 for row in sample if row["outcome"] == 1) / len(sample)
+
+    def mean_regret(sample: List[Dict[str, Any]]) -> Optional[float]:
+        if not sample:
+            return None
+        regrets = []
+        for row in sample:
+            values = {
+                candidate["action"]: candidate["value"]
+                for candidate in row["candidates"]
+            }
+            chosen = values.get(row["chosen"])
+            if chosen is None:
+                # The played move can fall outside the top-k candidates
+                # (a gumbel search picks by g + logits + sigma(q), not
+                # visits), in which case there is no regret to measure.
+                continue
+            best = max(values.values())
+            regrets.append(best - chosen)
+        if not regrets:
+            return None
+        return sum(regrets) / len(regrets)
+
+    def by_seat(sample: List[Dict[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for seat in (0, 1):
+            part = [row for row in sample if row["seat"] == seat]
+            result[f"seat{seat}"] = {
+                "n": len(part),
+                "override_rate": (
+                    round(sum(1 for r in part if r["override"]) / len(part), 4)
+                    if part
+                    else None
+                ),
+                "win_rate": win_rate(part),
+            }
+        return result
+
+    result = {
+        "snapshots": str(args.snapshots),
+        "decisions": len(rows),
+        "decided": len(decided),
+        "override_rate": (
+            round(sum(1 for r in rows if r["override"]) / len(rows), 4)
+            if rows
+            else None
+        ),
+        "win_rate_when_value_agrees": win_rate(non_overrides),
+        "win_rate_when_value_disagrees": win_rate(overrides),
+        "mean_regret": mean_regret(rows),
+        "by_seat": by_seat(decided),
+    }
+    out_path = Path(args.out) if args.out else None
+    text = json.dumps(result, indent=2)
+    print(text)
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text + "\n")
+
+
+class RerankAgent(Agent):
+    """Search for candidates, then let the value head pick among them."""
+
+    def __init__(
+        self,
+        player_id: int,
+        net: Any,
+        args: argparse.Namespace,
+    ) -> None:
+        super().__init__(player_id)
+        self.inner = make_agent(net, player_id, args)
+        self.net = net
+        self.top_k = args.top_k
+        self.last_was_forced = False
+
+    def update_from_game(
+        self, game_history: List[Tuple[GameState, Any, float]]
+    ) -> None:
+        """Nothing to learn at eval time."""
+
+    def select_action(self, game_state: GameState) -> Any:
+        action = self.inner.select_action(game_state)
+        if self.inner._last_forced is not None:
+            self.last_was_forced = True
+            return action
+        self.last_was_forced = False
+        root = self.inner._last_root
+        if root is None:
+            return action
+        candidates = search_candidates(self.inner, self.top_k)
+        if len(candidates) < 2:
+            return action
+        scored = score_candidates(
+            self.net, root.game_state, self.player_id, candidates
+        )
+        best = max(scored, key=lambda row: row["value"])
+        for cand_action, _ in candidates:
+            if action_key(cand_action) == best["action"]:
+                return cand_action
+        return action
+
+
+def match(
+    a_factory: Any,
+    b_factory: Any,
+    games: int,
+    seed: int,
+) -> Dict[str, Any]:
+    """Paired-deal match: same deal both seats, greedy (see head_to_head)."""
+    a_wins = b_wins = draws = 0
+    turns = 0
+    for game in range(games):
+        deal = seed + game // 2
+        a_seat = game % 2
+        agents = {a_seat: a_factory(), 1 - a_seat: b_factory()}
+        winner, game_turns, _ = _play_game(agents, seed=deal)
+        turns += game_turns
+        if winner is None:
+            draws += 1
+        elif winner == a_seat:
+            a_wins += 1
+        else:
+            b_wins += 1
+    decided = games - draws
+    rate = a_wins / decided if decided else 0.5
+    ci = 1.96 * (rate * (1 - rate) / decided) ** 0.5 if decided else 0.0
+    return {
+        "a_wins": a_wins,
+        "b_wins": b_wins,
+        "draws": draws,
+        "a_win_rate": round(rate, 4),
+        "ci95": round(ci, 4),
+        "mean_turns": round(turns / games, 2) if games else None,
+    }
+
+
+def h2h_mode(args: argparse.Namespace) -> None:
+    net = load_checkpoint(Path(args.checkpoint), weights=args.weights)
+    started = time.time()
+    result = match(
+        lambda: RerankAgent(0, net, args),
+        lambda: MCTSAgent(
+            player_id=1,
+            policy_network=net,
+            value_network=net,
+            simulations=args.sims,
+            simulation_time=args.sim_time,
+            search=args.search,
+            temperature=0.0,
+        ),
+        games=args.games,
+        seed=args.seed,
+    )
+    result.update(
+        {
+            "checkpoint": str(args.checkpoint),
+            "sims": args.sims,
+            "top_k": args.top_k,
+            "games": args.games,
+            "elapsed_seconds": round(time.time() - started, 1),
+        }
+    )
+    text = json.dumps(result, indent=2)
+    print(text)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text + "\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="mode", required=True)
+
+    collect_p = sub.add_parser("collect", help="snapshot decisions + values")
+    collect_p.add_argument("--checkpoint", required=True)
+    collect_p.add_argument("--weights", default="network")
+    collect_p.add_argument("--games", type=int, default=200)
+    collect_p.add_argument("--sims", type=int, default=32)
+    collect_p.add_argument("--sim-time", type=float, default=30.0)
+    collect_p.add_argument(
+        "--search", default="puct", choices=("puct", "gumbel")
+    )
+    collect_p.add_argument("--top-k", type=int, default=8)
+    collect_p.add_argument("--turn-min", type=int, default=2)
+    collect_p.add_argument("--turn-max", type=int, default=8)
+    collect_p.add_argument("--seed", type=int, default=20261110)
+    collect_p.add_argument("--out", required=True)
+    collect_p.set_defaults(func=collect)
+
+    analyze_p = sub.add_parser("analyze", help="summarise a snapshots JSONL")
+    analyze_p.add_argument("--snapshots", required=True)
+    analyze_p.add_argument("--out")
+    analyze_p.set_defaults(func=analyze)
+
+    h2h_p = sub.add_parser("h2h", help="rerank agent vs plain search agent")
+    h2h_p.add_argument("--checkpoint", required=True)
+    h2h_p.add_argument("--weights", default="network")
+    h2h_p.add_argument("--games", type=int, default=400)
+    h2h_p.add_argument("--sims", type=int, default=32)
+    h2h_p.add_argument("--sim-time", type=float, default=30.0)
+    h2h_p.add_argument("--search", default="puct", choices=("puct", "gumbel"))
+    h2h_p.add_argument("--top-k", type=int, default=8)
+    h2h_p.add_argument("--seed", type=int, default=20261110)
+    h2h_p.add_argument("--out")
+    h2h_p.set_defaults(func=h2h_mode)
+
+    args = parser.parse_args()
+    if getattr(args, "seed", None) is not None:
+        seed_everything(args.seed)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

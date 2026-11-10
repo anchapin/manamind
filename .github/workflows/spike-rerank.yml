@@ -1,1 +1,141 @@
-IyBQcmVkaWN0aW9uLWd1aWRlZCBtb3ZlIHNlbGVjdGlvbiBzcGlrZSAoIzEwNiksIGV2YWwtb25seSBvbiB0aGUgaG9tZQojIHJ1bm5lci4gTm8gdHJhaW5pbmcsIG5vIGJ1ZmZlciB3cml0ZXM6IGNvbGxlY3Qgc25hcHNob3RzIGRlY2lzaW9ucyBmcm9tCiMgZ2FtZXMgcGxheWVkIHdpdGggdGhlIGNoYW1waW9uJ3Mgb3duIHNlYXJjaCBhbmQgdmFsdWUtc2NvcmVzIGVhY2gKIyBjYW5kaWRhdGUncyBlbmdpbmUtc2ltdWxhdGVkIHN1Y2Nlc3NvcjsgaDJoIHBsYXlzIGEgcmUtcmFua2luZyBhZ2VudAojIGFnYWluc3QgdGhlIHBsYWluIHNlYXJjaCBhZ2VudC4gTWFudWFsIGRpc3BhdGNoIG9ubHkuCm5hbWU6IFJlcmFuayBzcGlrZSAoIzEwNikKCm9uOgogIHdvcmtmbG93X2Rpc3BhdGNoOgogICAgaW5wdXRzOgogICAgICBtb2RlOgogICAgICAgIGRlc2NyaXB0aW9uOiAiY29sbGVjdCAoc25hcHNob3RzKSBvciBoMmggKHJlcmFuayB2cyBwbGFpbikiCiAgICAgICAgcmVxdWlyZWQ6IHRydWUKICAgICAgICBkZWZhdWx0OiAiY29sbGVjdCIKICAgICAgcnVuX25hbWU6CiAgICAgICAgZGVzY3JpcHRpb246ICJDaGFtcGlvbiBydW4gZGlyIHVuZGVyIH4vbWFuYW1pbmQtcnVucyIKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICJzZWxmcGxheV9yZzI2MTRfY2Q5NiIKICAgICAgY2hlY2twb2ludDoKICAgICAgICBkZXNjcmlwdGlvbjogIkNoZWNrcG9pbnQgcGF0aCB1bmRlciB+L21hbmFtaW5kLXJ1bnMvPHJ1bl9uYW1lPiIKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICJyb3VuZHMvMDAwMS9sYXN0LnB0IgogICAgICBnYW1lczoKICAgICAgICBkZXNjcmlwdGlvbjogIkdhbWVzIHRoaXMgZGlzcGF0Y2giCiAgICAgICAgcmVxdWlyZWQ6IHRydWUKICAgICAgICBkZWZhdWx0OiAiMjAwIgogICAgICBzaW1zOgogICAgICAgIGRlc2NyaXB0aW9uOiAiU2VhcmNoIHNpbXVsYXRpb25zIHBlciBkZWNpc2lvbiIKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICIzMiIKICAgICAgdG9wX2s6CiAgICAgICAgZGVzY3JpcHRpb246ICJDYW5kaWRhdGVzIGtlcHQgcGVyIGRlY2lzaW9uIgogICAgICAgIHJlcXVpcmVkOiB0cnVlCiAgICAgICAgZGVmYXVsdDogIjgiCiAgICAgIHdlaWdodHM6CiAgICAgICAgZGVzY3JpcHRpb246ICJuZXR3b3JrIG9yIGVtYSIKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICJuZXR3b3JrIgogICAgICBzZWFyY2g6CiAgICAgICAgZGVzY3JpcHRpb246ICJwdWN0IG9yIGd1bWJlbCIKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICJwdWN0IgogICAgICBzZWVkOgogICAgICAgIGRlc2NyaXB0aW9uOiAiQmFzZSBzZWVkIgogICAgICAgIHJlcXVpcmVkOiB0cnVlCiAgICAgICAgZGVmYXVsdDogIjIwMjYxMTEwIgoKcGVybWlzc2lvbnM6CiAgY29udGVudHM6IHJlYWQKCmNvbmN1cnJlbmN5OgogIGdyb3VwOiBob21lLXBjLXNwaWtlLXJlcmFuawogIGNhbmNlbC1pbi1wcm9ncmVzczogZmFsc2UKCmpvYnM6CiAgc3Bpa2U6CiAgICBydW5zLW9uOiBbc2VsZi1ob3N0ZWQsIGxpbnV4LCBtYW5hbWluZC10cmFpbl0KICAgIHRpbWVvdXQtbWludXRlczogNjAwCiAgICBlbnY6CiAgICAgIE1PREU6ICR7eyBnaXRodWIuZXZlbnQuaW5wdXRzLm1vZGUgfX0KICAgICAgUlVOX05BTUU6ICR7eyBnaXRodWIuZXZlbnQuaW5wdXRzLnJ1bl9uYW1lIH19CiAgICAgIENLUFRfUkVMOiAke3sgZ2l0aHViLmV2ZW50LmlucHV0cy5jaGVja3BvaW50IH19CiAgICAgIEdBTUVTOiAke3sgZ2l0aHViLmV2ZW50LmlucHV0cy5nYW1lcyB9fQogICAgICBTSU1TOiAke3sgZ2l0aHViLmV2ZW50LmlucHV0cy5zaW1zIH19CiAgICAgIFRPUF9LOiAke3sgZ2l0aHViLmV2ZW50LmlucHV0cy50b3BfayB9fQogICAgICBXRUlHSFRTOiAke3sgZ2l0aHViLmV2ZW50LmlucHV0cy53ZWlnaHRzIH19CiAgICAgIFNFQVJDSDogJHt7IGdpdGh1Yi5ldmVudC5pbnB1dHMuc2VhcmNoIH19CiAgICAgIFNFRUQ6ICR7eyBnaXRodWIuZXZlbnQuaW5wdXRzLnNlZWQgfX0KICAgIHN0ZXBzOgogICAgICAtIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjQKCiAgICAgIC0gbmFtZTogVmFsaWRhdGUgaW5wdXRzCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBbICIkTU9ERSIgPSAiY29sbGVjdCIgXSB8fCBbICIkTU9ERSIgPSAiaDJoIiBdIHx8IHsgZWNobyAiYmFkIG1vZGUiOyBleGl0IDE7IH0KICAgICAgICAgIFtbICIkUlVOX05BTUUiID1+IF5bQS1aYS16MC05Ll8tXSskIF1dIHx8IHsgZWNobyAiYmFkIHJ1bl9uYW1lIjsgZXhpdCAxOyB9CiAgICAgICAgICBbWyAiJENLUFRfUkVMIiA9fiBeW0EtWmEtejAtOS5fLy1dKyQgJiYgIiRDS1BUX1JFTCIgIT0gKi4uKiBdXSB8fCB7IGVjaG8gImJhZCBjaGVja3BvaW50IjsgZXhpdCAxOyB9CiAgICAgICAgICBbWyAiJEdBTUVTIiA9fiBeWzAtOV0rJCAmJiAiJEdBTUVTIiAtZ3QgMCBdXSB8fCB7IGVjaG8gImJhZCBnYW1lcyI7IGV4aXQgMTsgfQogICAgICAgICAgW1sgIiRTSU1TIiA9fiBeWzAtOV0rJCAmJiAiJFNJTVMiIC1ndCAwIF1dIHx8IHsgZWNobyAiYmFkIHNpbXMiOyBleGl0IDE7IH0KICAgICAgICAgIFtbICIkVE9QX0siID1+IF5bMC05XSskICYmICIkVE9QX0siIC1ndCAxIF1dIHx8IHsgZWNobyAiYmFkIHRvcF9rIjsgZXhpdCAxOyB9CiAgICAgICAgICBbICIkV0VJR0hUUyIgPSAibmV0d29yayIgXSB8fCBbICIkV0VJR0hUUyIgPSAiZW1hIiBdIHx8IHsgZWNobyAiYmFkIHdlaWdodHMiOyBleGl0IDE7IH0KICAgICAgICAgIFsgIiRTRUFSQ0giID0gInB1Y3QiIF0gfHwgWyAiJFNFQVJDSCIgPSAiZ3VtYmVsIiBdIHx8IHsgZWNobyAiYmFkIHNlYXJjaCI7IGV4aXQgMTsgfQogICAgICAgICAgQ0tQVD0iJEhPTUUvbWFuYW1pbmQtcnVucy8kUlVOX05BTUUvJENLUFRfUkVMIgogICAgICAgICAgWyAtZiAiJENLUFQiIF0gfHwgeyBlY2hvICJubyBjaGVja3BvaW50ICRDS1BUIjsgZXhpdCAxOyB9CiAgICAgICAgICBlY2hvICJDS1BUPSRDS1BUIiA+PiAiJEdJVEhVQl9FTlYiCgogICAgICAtIG5hbWU6IFB5dGhvbiBlbnZpcm9ubWVudCAob25lIGNhY2hlZCB2ZW52IHBlciBydW5uZXIgaW5zdGFuY2UpCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBWRU5WPSIkSE9NRS9tYW5hbWluZC12ZW52LSR7UlVOTkVSX05BTUUvLyAvX30iCiAgICAgICAgICBbIC14ICIkVkVOVi9iaW4vcHl0aG9uIiBdIHx8IHB5dGhvbjMgLW0gdmVudiAiJFZFTlYiCiAgICAgICAgICAiJFZFTlYvYmluL3BpcCIgaW5zdGFsbCAtcSAtLXVwZ3JhZGUgcGlwCiAgICAgICAgICAiJFZFTlYvYmluL3BpcCIgaW5zdGFsbCAtcSB0b3JjaCAtLWluZGV4LXVybCBodHRwczovL2Rvd25sb2FkLnB5dG9yY2gub3JnL3dobC9jcHUKICAgICAgICAgICIkVkVOVi9iaW4vcGlwIiBpbnN0YWxsIC1xIC1lIC4KICAgICAgICAgIGVjaG8gIiRWRU5WL2JpbiIgPj4gIiRHSVRIVUJfUEFUSCIKCiAgICAgIC0gbmFtZTogUnVuIHNwaWtlICgke3sgZ2l0aHViLmV2ZW50LmlucHV0cy5tb2RlIH19KQogICAgICAgIHNoZWxsOiBiYXNoCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLW8gcGlwZWZhaWwKICAgICAgICAgIG1rZGlyIC1wIHJlc3VsdHMKICAgICAgICAgIE9VVD0icmVzdWx0cy9yZXJhbmtfJHtNT0RFfS5qc29ubCIKICAgICAgICAgIGlmIFsgIiRNT0RFIiA9ICJjb2xsZWN0IiBdOyB0aGVuCiAgICAgICAgICAgIFBZVEhPTlBBVEg9c3JjIHB5dGhvbiBzY3JpcHRzL3ByZWRpY3Rpb25fcmVyYW5rX3NwaWtlLnB5IGNvbGxlY3QgXAogICAgICAgICAgICAgIC0tY2hlY2twb2ludCAiJENLUFQiIC0td2VpZ2h0cyAiJFdFSUdIVFMiIFwKICAgICAgICAgICAgICAtLWdhbWVzICIkR0FNRVMiIC0tc2ltcyAiJFNJTVMiIC0tdG9wLWsgIiRUT1BfSyIgXAogICAgICAgICAgICAgIC0tc2VhcmNoICIkU0VBUkNIIiAtLXNlZWQgIiRTRUVEIiAtLW91dCAiJE9VVCIgMj4mMSBcCiAgICAgICAgICAgICAgfCBncmVwIC12ICdeXChERUJVR1x8SU5GT1wpJyB8IHRhaWwgLW4gMjAwMAogICAgICAgICAgZWxzZQogICAgICAgICAgICBPVVQ9InJlc3VsdHMvcmVyYW5rX2gyaC5qc29uIgogICAgICAgICAgICBQWVRIT05QQVRIPXNyYyBweXRob24gc2NyaXB0cy9wcmVkaWN0aW9uX3JlcmFua19zcGlrZS5weSBoMmggXAogICAgICAgICAgICAgIC0tY2hlY2twb2ludCAiJENLUFQiIC0td2VpZ2h0cyAiJFdFSUdIVFMiIFwKICAgICAgICAgICAgICAtLWdhbWVzICIkR0FNRVMiIC0tc2ltcyAiJFNJTVMiIC0tdG9wLWsgIiRUT1BfSyIgXAogICAgICAgICAgICAgIC0tc2VhcmNoICIkU0VBUkNIIiAtLXNlZWQgIiRTRUVEIiAtLW91dCAiJE9VVCIgMj4mMSBcCiAgICAgICAgICAgICAgfCBncmVwIC12ICdeXChERUJVR1x8SU5GT1wpJyB8IHRhaWwgLW4gMjAwMAogICAgICAgICAgZmkKICAgICAgICAgIFsgLXMgIiRPVVQiIF0gfHwgeyBlY2hvICJubyBvdXRwdXQgYXQgJE9VVCI7IGV4aXQgMTsgfQoKICAgICAgLSBuYW1lOiBBbmFseXplIHNuYXBzaG90cwogICAgICAgIGlmOiBlbnYuTU9ERSA9PSAnY29sbGVjdCcKICAgICAgICBzaGVsbDogYmFzaAogICAgICAgIHJ1bjogfAogICAgICAgICAgUFlUSE9OUEFUSD1zcmMgcHl0aG9uIHNjcmlwdHMvcHJlZGljdGlvbl9yZXJhbmtfc3Bpa2UucHkgYW5hbHl6ZSBcCiAgICAgICAgICAgIC0tc25hcHNob3RzIHJlc3VsdHMvcmVyYW5rX2NvbGxlY3QuanNvbmwgXAogICAgICAgICAgICAtLW91dCByZXN1bHRzL3JlcmFua19hbmFseXNpcy5qc29uCiAgICAgICAgICBjYXQgcmVzdWx0cy9yZXJhbmtfYW5hbHlzaXMuanNvbiA+PiAiJEdJVEhVQl9TVEVQX1NVTU1BUlkiCgogICAgICAtIG5hbWU6IFVwbG9hZCByZXN1bHRzCiAgICAgICAgaWY6IGFsd2F5cygpCiAgICAgICAgdXNlczogYWN0aW9ucy91cGxvYWQtYXJ0aWZhY3RAdjQKICAgICAgICB3aXRoOgogICAgICAgICAgbmFtZTogcmVyYW5rLXNwaWtlLXJlc3VsdHMKICAgICAgICAgIHBhdGg6IHJlc3VsdHMvCiAgICAgICAgICBpZi1uby1maWxlcy1mb3VuZDogd2Fybgo=
+# Prediction-guided move selection spike (#106), eval-only on the home
+# runner. No training, no buffer writes: collect snapshots decisions from
+# games played with the champion's own search and value-scores each
+# candidate's engine-simulated successor; h2h plays a re-ranking agent
+# against the plain search agent. Manual dispatch only.
+name: Rerank spike (#106)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "collect (snapshots) or h2h (rerank vs plain)"
+        required: true
+        default: "collect"
+        type: string
+      run_name:
+        description: "Champion run dir under ~/manamind-runs"
+        required: true
+        default: "selfplay_rg2614_cd96"
+        type: string
+      checkpoint:
+        description: "Checkpoint path under ~/manamind-runs/<run_name>"
+        required: true
+        default: "rounds/0001/last.pt"
+        type: string
+      games:
+        description: "Games this dispatch"
+        required: true
+        default: "200"
+        type: string
+      sims:
+        description: "Search simulations per decision"
+        required: true
+        default: "32"
+        type: string
+      top_k:
+        description: "Candidates kept per decision"
+        required: true
+        default: "8"
+        type: string
+      weights:
+        description: "network or ema"
+        required: true
+        default: "network"
+        type: string
+      search:
+        description: "puct or gumbel"
+        required: true
+        default: "puct"
+        type: string
+      seed:
+        description: "Base seed"
+        required: true
+        default: "20261110"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-pc-spike-rerank
+  cancel-in-progress: false
+
+jobs:
+  spike:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 600
+    env:
+      MODE: ${{ github.event.inputs.mode }}
+      RUN_NAME: ${{ github.event.inputs.run_name }}
+      CKPT_REL: ${{ github.event.inputs.checkpoint }}
+      GAMES: ${{ github.event.inputs.games }}
+      SIMS: ${{ github.event.inputs.sims }}
+      TOP_K: ${{ github.event.inputs.top_k }}
+      WEIGHTS: ${{ github.event.inputs.weights }}
+      SEARCH: ${{ github.event.inputs.search }}
+      SEED: ${{ github.event.inputs.seed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          [ "$MODE" = "collect" ] || [ "$MODE" = "h2h" ] || { echo "bad mode"; exit 1; }
+          [[ "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run_name"; exit 1; }
+          [[ "$CKPT_REL" =~ ^[A-Za-z0-9._/-]+$ && "$CKPT_REL" != *..* ]] || { echo "bad checkpoint"; exit 1; }
+          [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 ]] || { echo "bad games"; exit 1; }
+          [[ "$SIMS" =~ ^[0-9]+$ && "$SIMS" -gt 0 ]] || { echo "bad sims"; exit 1; }
+          [[ "$TOP_K" =~ ^[0-9]+$ && "$TOP_K" -gt 1 ]] || { echo "bad top_k"; exit 1; }
+          [ "$WEIGHTS" = "network" ] || [ "$WEIGHTS" = "ema" ] || { echo "bad weights"; exit 1; }
+          [ "$SEARCH" = "puct" ] || [ "$SEARCH" = "gumbel" ] || { echo "bad search"; exit 1; }
+          CKPT="$HOME/manamind-runs/$RUN_NAME/$CKPT_REL"
+          [ -f "$CKPT" ] || { echo "no checkpoint $CKPT"; exit 1; }
+          echo "CKPT=$CKPT" >> "$GITHUB_ENV"
+
+      - name: Python environment (one cached venv per runner instance)
+        run: |
+          VENV="$HOME/manamind-venv-${RUNNER_NAME// /_}"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --upgrade pip
+          "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$VENV/bin/pip" install -q -e .
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Run spike (${{ github.event.inputs.mode }})
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p results
+          OUT="results/rerank_${MODE}.jsonl"
+          if [ "$MODE" = "collect" ]; then
+            PYTHONPATH=src python scripts/prediction_rerank_spike.py collect \
+              --checkpoint "$CKPT" --weights "$WEIGHTS" \
+              --games "$GAMES" --sims "$SIMS" --top-k "$TOP_K" \
+              --search "$SEARCH" --seed "$SEED" --out "$OUT" 2>&1 \
+              | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000
+          else
+            OUT="results/rerank_h2h.json"
+            PYTHONPATH=src python scripts/prediction_rerank_spike.py h2h \
+              --checkpoint "$CKPT" --weights "$WEIGHTS" \
+              --games "$GAMES" --sims "$SIMS" --top-k "$TOP_K" \
+              --search "$SEARCH" --seed "$SEED" --out "$OUT" 2>&1 \
+              | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000
+          fi
+          [ -s "$OUT" ] || { echo "no output at $OUT"; exit 1; }
+
+      - name: Analyze snapshots
+        if: env.MODE == 'collect'
+        shell: bash
+        run: |
+          PYTHONPATH=src python scripts/prediction_rerank_spike.py analyze \
+            --snapshots results/rerank_collect.jsonl \
+            --out results/rerank_analysis.json
+          cat results/rerank_analysis.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rerank-spike-results
+          path: results/
+          if-no-files-found: warn
