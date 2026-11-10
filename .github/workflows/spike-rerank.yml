@@ -1,96 +1,110 @@
-# Prediction-guided move selection spike (#106), eval-only on the home
-# runner. No training, no buffer writes: collect snapshots decisions from
-# games played with the champion's own search and value-scores each
-# candidate's engine-simulated successor; h2h plays a re-ranking agent
-# against the plain search agent. Manual dispatch only.
+# manamind#106 prediction-rerank spike, stage 1 (collect + analyze).
+#
+# Plays self-play games with the champion on the planar-nexus engine
+# (selfplay-forge.ts --probe collect): every net decision records the
+# search's per-candidate value-head reads (visits, mean leaf value over
+# the dealt worlds) and the search's own pick. Then prediction_rerank_spike.py
+# scores the value-head re-rank signal (override rate, regret, by seat,
+# mover return on override vs agree). Eval-only: no training, no
+# champion changes; go/no-go lives on issue #96.
+
 name: Rerank spike (#106)
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "collect (snapshots) or h2h (rerank vs plain)"
+        description: "collect (plays probe games, then analyzes)"
         required: true
-        default: "collect"
         type: string
       run_name:
         description: "Champion run dir under ~/manamind-runs"
         required: true
-        default: "selfplay_rg2614_cd96"
         type: string
-      checkpoint:
-        description: "Checkpoint path under ~/manamind-runs/<run_name>"
-        required: true
+      ckpt_rel:
+        description: "Checkpoint path under the run dir"
+        required: false
+        type: string
         default: "rounds/0001/last.pt"
-        type: string
       games:
-        description: "Games this dispatch"
-        required: true
-        default: "200"
+        description: "Probe games"
+        required: false
         type: string
+        default: "200"
       sims:
         description: "Search simulations per decision"
-        required: true
+        required: false
+        type: string
         default: "32"
-        type: string
       top_k:
-        description: "Candidates kept per decision"
-        required: true
+        description: "Top-k candidates for the re-rank analysis"
+        required: false
+        type: string
         default: "8"
-        type: string
-      weights:
-        description: "network or ema"
-        required: true
-        default: "network"
-        type: string
-      search:
-        description: "puct or gumbel"
-        required: true
-        default: "puct"
-        type: string
       seed:
-        description: "Base seed"
-        required: true
-        default: "20261110"
+        description: "First game seed"
+        required: false
         type: string
-
-permissions:
-  contents: read
-
-concurrency:
-  group: home-pc-spike-rerank
-  cancel-in-progress: false
+        default: "20261110"
+      c_scale:
+        description: "Self-play cScale (champion recipe 0.5)"
+        required: false
+        type: string
+        default: "0.5"
+      pn_ref:
+        description: "planar-nexus ref carrying the probe code"
+        required: false
+        type: string
+        default: "main"
 
 jobs:
   spike:
     runs-on: [self-hosted, linux, manamind-train]
-    timeout-minutes: 600
+    timeout-minutes: 360
     env:
-      MODE: ${{ github.event.inputs.mode }}
-      RUN_NAME: ${{ github.event.inputs.run_name }}
-      CKPT_REL: ${{ github.event.inputs.checkpoint }}
-      GAMES: ${{ github.event.inputs.games }}
-      SIMS: ${{ github.event.inputs.sims }}
-      TOP_K: ${{ github.event.inputs.top_k }}
-      WEIGHTS: ${{ github.event.inputs.weights }}
-      SEARCH: ${{ github.event.inputs.search }}
-      SEED: ${{ github.event.inputs.seed }}
+      MODE: ${{ inputs.mode }}
+      RUN_NAME: ${{ inputs.run_name }}
+      CKPT_REL: ${{ inputs.ckpt_rel }}
+      GAMES: ${{ inputs.games }}
+      SIMS: ${{ inputs.sims }}
+      TOP_K: ${{ inputs.top_k }}
+      SEED: ${{ inputs.seed }}
+      CSCALE: ${{ inputs.c_scale }}
+      PN_REF: ${{ inputs.pn_ref }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Validate inputs
         run: |
-          [ "$MODE" = "collect" ] || [ "$MODE" = "h2h" ] || { echo "bad mode"; exit 1; }
+          [ "$MODE" = "collect" ] || { echo "mode must be collect"; exit 1; }
           [[ "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad run_name"; exit 1; }
-          [[ "$CKPT_REL" =~ ^[A-Za-z0-9._/-]+$ && "$CKPT_REL" != *..* ]] || { echo "bad checkpoint"; exit 1; }
+          [[ "$CKPT_REL" =~ ^[A-Za-z0-9._/-]+$ && "$CKPT_REL" != *..* ]] || { echo "bad ckpt_rel"; exit 1; }
           [[ "$GAMES" =~ ^[0-9]+$ && "$GAMES" -gt 0 ]] || { echo "bad games"; exit 1; }
           [[ "$SIMS" =~ ^[0-9]+$ && "$SIMS" -gt 0 ]] || { echo "bad sims"; exit 1; }
-          [[ "$TOP_K" =~ ^[0-9]+$ && "$TOP_K" -gt 1 ]] || { echo "bad top_k"; exit 1; }
-          [ "$WEIGHTS" = "network" ] || [ "$WEIGHTS" = "ema" ] || { echo "bad weights"; exit 1; }
-          [ "$SEARCH" = "puct" ] || [ "$SEARCH" = "gumbel" ] || { echo "bad search"; exit 1; }
-          CKPT="$HOME/manamind-runs/$RUN_NAME/$CKPT_REL"
-          [ -f "$CKPT" ] || { echo "no checkpoint $CKPT"; exit 1; }
-          echo "CKPT=$CKPT" >> "$GITHUB_ENV"
+          [[ "$TOP_K" =~ ^[0-9]+$ && "$TOP_K" -gt 0 ]] || { echo "bad top_k"; exit 1; }
+          [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "bad seed"; exit 1; }
+          [[ "$CSCALE" =~ ^[0-9.]+$ ]] || { echo "bad c_scale"; exit 1; }
+          [[ "$PN_REF" =~ ^[A-Za-z0-9._/-]+$ && "$PN_REF" != *..* ]] || { echo "bad pn_ref"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: anchapin/planar-nexus
+          ref: ${{ inputs.pn_ref }}
+          path: pn
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pn/package-lock.json
+
+      - name: Planar Nexus dependencies
+        working-directory: pn
+        run: npm ci --no-audit --no-fund
+
+      - name: Planar Nexus card-script index
+        working-directory: pn
+        run: npx tsx scripts/build-card-script-index.ts
 
       - name: Python environment (one cached venv per runner instance)
         run: |
@@ -98,44 +112,46 @@ jobs:
           [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
           "$VENV/bin/pip" install -q --upgrade pip
           "$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
-          "$VENV/bin/pip" install -q -e .
+          "$VENV/bin/pip" install -q -e . onnx onnxruntime
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
-      - name: Run spike (${{ github.event.inputs.mode }})
-        shell: bash
+      - name: Resolve champion ONNX (export if the ladder did not)
+        run: |
+          RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
+          CKPT="$RUN_DIR/$CKPT_REL"
+          [ -f "$CKPT" ] || { echo "no $CKPT"; exit 1; }
+          ONNX="${CKPT%.pt}.onnx"
+          if [ ! -f "$ONNX" ]; then
+            echo "exporting $CKPT"
+            PYTHONPATH=src python -c "import sys; from pathlib import Path; from manamind.models.forge_pointer import load_pointer_net; from manamind.models.forge_pointer_onnx import export; net, _ = load_pointer_net(sys.argv[1]); export(net, Path(sys.argv[2]))" "$CKPT" results/spike_onnx
+            ONNX="results/spike_onnx/forge_pointer.onnx"
+          fi
+          echo "ONNX=$ONNX" >> "$GITHUB_ENV"
+
+      - name: Collect probe games
+        working-directory: pn
         run: |
           set -o pipefail
-          mkdir -p results
-          OUT="results/rerank_${MODE}.jsonl"
-          if [ "$MODE" = "collect" ]; then
-            PYTHONPATH=src python scripts/prediction_rerank_spike.py collect \
-              --checkpoint "$CKPT" --weights "$WEIGHTS" \
-              --games "$GAMES" --sims "$SIMS" --top-k "$TOP_K" \
-              --search "$SEARCH" --seed "$SEED" --out "$OUT" 2>&1 \
-              | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000
-          else
-            OUT="results/rerank_h2h.json"
-            PYTHONPATH=src python scripts/prediction_rerank_spike.py h2h \
-              --checkpoint "$CKPT" --weights "$WEIGHTS" \
-              --games "$GAMES" --sims "$SIMS" --top-k "$TOP_K" \
-              --search "$SEARCH" --seed "$SEED" --out "$OUT" 2>&1 \
-              | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000
-          fi
-          [ -s "$OUT" ] || { echo "no output at $OUT"; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/results"
+          npx tsx scripts/selfplay-forge.ts \
+            --model "$GITHUB_WORKSPACE/$ONNX" \
+            --games "$GAMES" --seed "$SEED" --sims "$SIMS" \
+            --pick gumbel --c-scale "$CSCALE" \
+            --deck-a red --deck-b green \
+            --probe collect \
+            --out "$GITHUB_WORKSPACE/results/rerank_collect.jsonl.gz" \
+            2>&1 | tail -n 100
 
-      - name: Analyze snapshots
-        if: env.MODE == 'collect'
-        shell: bash
+      - name: Analyze re-rank signal
         run: |
-          PYTHONPATH=src python scripts/prediction_rerank_spike.py analyze \
-            --snapshots results/rerank_collect.jsonl \
-            --out results/rerank_analysis.json
-          cat results/rerank_analysis.json >> "$GITHUB_STEP_SUMMARY"
+          PYTHONPATH=src python scripts/prediction_rerank_spike.py \
+            --in results/rerank_collect.jsonl.gz \
+            --out results/rerank_analysis.json \
+            --top-k "$TOP_K"
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rerank-spike-results
+          name: rerank-spike-results-${{ inputs.run_name }}
           path: results/
-          if-no-files-found: warn
