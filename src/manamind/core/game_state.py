@@ -437,7 +437,8 @@ class GameStateEncoder(nn.Module):
 
         embedded = self.card_embedding(ids)
         _, (hidden, _) = self.zone_encoders[zone_idx](embedded)
-        return hidden.view(len(rows), -1)
+        result: torch.Tensor = hidden.view(len(rows), -1)
+        return result
 
     def encode_player(self, player: Player) -> torch.Tensor:
         """Encode player state (life, mana, etc.) into a tensor."""
