@@ -110,9 +110,7 @@ class Card(BaseModel):
         return "Instant" in self.card_types or "Sorcery" in self.card_types
 
     def current_power(self) -> Optional[int]:
-        """Get current power including modifications."""
-        if self.power is None:
-            return None
+        """Check current power including modifications."""
         return (
             self.power
             + self.counters.get("+1/+1", 0)
@@ -120,9 +118,7 @@ class Card(BaseModel):
         )
 
     def current_toughness(self) -> Optional[int]:
-        """Get current toughness including modifications."""
-        if self.toughness is None:
-            return None
+        """Check current toughness including modifications."""
         return (
             self.toughness
             + self.counters.get("+1/+1", 0)
@@ -397,6 +393,45 @@ class GameStateEncoder(nn.Module):
         result: torch.Tensor = hidden.view(-1)  # Flatten
         return result
 
+    def _encode_zone_batch(self, zone_idx: int, zones: List[Zone]) -> torch.Tensor:
+        """Encode same-type zones across players in a single LSTM call.
+
+        Batched variant of :meth:`encode_zone`: instead of running each
+        player's zone of one type through that type's LSTM separately, the
+        zones are stacked into one padded batch and encoded in a single
+        call. Zones are padded to the longest real zone in the batch rather
+        than to ``max_cards_per_zone``, so a nearly-empty hand no longer
+        steps through 200 pad embeddings.
+
+        Note: because the LSTM consumes pad embeddings as regular inputs,
+        the returned representation is not numerically identical to the
+        fixed-200 padding of :meth:`encode_zone`. No trained checkpoint
+        depends on the old padding (active checkpoints use ForgePointerNet
+        or SimpleStateEncoder), so the change is safe.
+
+        Returns a tensor of shape ``(len(zones), hidden_dim)``.
+        """
+        rows: List[List[int]] = []
+        for zone in zones:
+            card_ids = [
+                card.card_id or 0 for card in zone.cards[: self.max_cards_per_zone]
+            ]
+            if not card_ids:
+                card_ids = [0]  # One pad token for an empty zone
+            rows.append(card_ids)
+
+        max_len = max(len(row) for row in rows)
+        ids = torch.zeros(len(rows), max_len, dtype=torch.long)
+        for row_idx, card_ids in enumerate(rows):
+            ids[row_idx, : len(card_ids)] = torch.tensor(
+                card_ids, dtype=torch.long
+            )
+        ids = ids.to(self.card_embedding.weight.device)
+
+        embedded = self.card_embedding(ids)
+        _, (hidden, _) = self.zone_encoders[zone_idx](embedded)
+        return hidden.view(len(rows), -1)
+
     def encode_player(self, player: Player) -> torch.Tensor:
         """Encode player state (life, mana, etc.) into a tensor."""
         features = [
@@ -432,7 +467,9 @@ class GameStateEncoder(nn.Module):
         """
         encoded_parts = []
 
-        # Encode zones for both players
+        # Encode zones for both players, one batched LSTM call per zone type
+        # instead of one call per zone (12 sequential calls dominated encode
+        # time; see #28).
         zone_types = [
             "hand",
             "battlefield",
@@ -441,14 +478,16 @@ class GameStateEncoder(nn.Module):
             "exile",
             "command_zone",
         ]
-        for player in game_state.players:
+        players = game_state.players
+        if players:
             for zone_idx, zone_name in enumerate(zone_types):
-                zone = getattr(player, zone_name)
-                zone_encoding = self.encode_zone(zone, zone_idx)
-                encoded_parts.append(zone_encoding)
+                zones = [getattr(player, zone_name) for player in players]
+                batched = self._encode_zone_batch(zone_idx, zones)
+                for player_idx in range(len(players)):
+                    encoded_parts.append(batched[player_idx])
 
         # Encode player states
-        for player in game_state.players:
+        for player in players:
             player_encoding = self.encode_player(player)
             encoded_parts.append(player_encoding)
 
