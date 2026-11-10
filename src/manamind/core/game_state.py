@@ -110,7 +110,9 @@ class Card(BaseModel):
         return "Instant" in self.card_types or "Sorcery" in self.card_types
 
     def current_power(self) -> Optional[int]:
-        """Check current power including modifications."""
+        """Get current power including modifications."""
+        if self.power is None:
+            return None
         return (
             self.power
             + self.counters.get("+1/+1", 0)
@@ -118,7 +120,9 @@ class Card(BaseModel):
         )
 
     def current_toughness(self) -> Optional[int]:
-        """Check current toughness including modifications."""
+        """Get current toughness including modifications."""
+        if self.toughness is None:
+            return None
         return (
             self.toughness
             + self.counters.get("+1/+1", 0)
@@ -393,7 +397,9 @@ class GameStateEncoder(nn.Module):
         result: torch.Tensor = hidden.view(-1)  # Flatten
         return result
 
-    def _encode_zone_batch(self, zone_idx: int, zones: List[Zone]) -> torch.Tensor:
+    def _encode_zone_batch(
+        self, zone_idx: int, zones: List[Zone]
+    ) -> torch.Tensor:
         """Encode same-type zones across players in a single LSTM call.
 
         Batched variant of :meth:`encode_zone`: instead of running each
@@ -414,7 +420,8 @@ class GameStateEncoder(nn.Module):
         rows: List[List[int]] = []
         for zone in zones:
             card_ids = [
-                card.card_id or 0 for card in zone.cards[: self.max_cards_per_zone]
+                card.card_id or 0
+                for card in zone.cards[: self.max_cards_per_zone]
             ]
             if not card_ids:
                 card_ids = [0]  # One pad token for an empty zone
