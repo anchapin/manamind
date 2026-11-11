@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
-
 from manamind.training.selfplay_loop import (
     build_parser,
     elo_diff,
@@ -907,7 +906,9 @@ def test_pool_cycles_through_snapshots_on_resume(tmp_path: Path) -> None:
 def test_pool_disabled_by_default(tmp_path: Path) -> None:
     fakes = Fakes([0.75, 0.4])
     state = run(
-        args(tmp_path, "--games", "100", "--rounds", "2"), fakes.runner, fakes.trainer
+        args(tmp_path, "--games", "100", "--rounds", "2"),
+        fakes.runner,
+        fakes.trainer,
     )
     assert not [c for c in fakes.cmds if "--opponent-model" in c]
     assert all(row["pool_games"] == 0 for row in state["history"])
