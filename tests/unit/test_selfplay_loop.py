@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+
 from manamind.training.selfplay_loop import (
     build_parser,
     elo_diff,
