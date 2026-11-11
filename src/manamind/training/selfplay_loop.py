@@ -39,6 +39,14 @@ self-play rows' value targets are the noise the value head cannot fit at
 any weight (vc4, #96); mixing concentrates the value gradient on
 learnable targets. The holdout is carved before mixing and stays unique.
 
+Opponent pool (``--opponent-pool-prob``, off at 0, #27): the loop plays
+that share of each round's games against a frozen past checkpoint instead
+of the current champion. The pool holds ``rounds/0000`` (the bootstrap
+champion) first, then up to ``--opponent-pool-max`` recent earlier rounds,
+picked cyclically; only the current champion's decisions are recorded, so
+the rows train the champion against its own lineage's diversity rather
+than only against itself.
+
 Decks (``--deck-a`` / ``--deck-b``): passed to the self-play, Expert-game
 and gate scripts. ``red`` / ``green`` are the #2614 Mono-Red Aggro and
 Mono-Green Landfall decks the yardsticks measure; left unset, the scripts
@@ -101,6 +109,9 @@ EXPERT_SEED_BASE = 3_000_000
 # serial rounds' self-play, gate, anchor and Expert seeds.
 FORK_SELF_SEED_BASE = 5_000_000
 FORK_GATE_SEED_BASE = 6_000_000
+# #27 opponent-pool games: seed blocks clear of self-play, gates, anchors,
+# Expert and fork games.
+POOL_SEED_BASE = 7_000_000
 DECK_NAME = re.compile(r"^[a-z][a-z-]*$")
 
 
@@ -246,6 +257,33 @@ def expert_score(
     return float(result["score"])
 
 
+def pool_snapshots(run_dir: Path, r: int, pool_max: int) -> List[Path]:
+    """Frozen past checkpoints for the #27 opponent pool.
+
+    ``rounds/0000`` (the bootstrap champion) is first when it carries a
+    trained ONNX; the remaining slots go to the most recent earlier rounds
+    that do. Returns round directories, newest last; empty when round ``r``
+    has no past snapshots yet.
+    """
+    rounds_dir = run_dir / "rounds"
+    have = [
+        d
+        for d in sorted(rounds_dir.glob("0*"))
+        if d.is_dir()
+        and d.name.isdigit()
+        and int(d.name) < r
+        and (d / "forge_pointer.onnx").is_file()
+    ]
+    pool: List[Path] = []
+    if rounds_dir / "0000" in have:
+        pool.append(rounds_dir / "0000")
+    keep = max(pool_max - 1, 0)
+    for d in have[len(have) - keep :] if keep else []:
+        if d not in pool:
+            pool.append(d)
+    return pool
+
+
 def kl_flags(args: argparse.Namespace) -> List[str]:
     """KL-weighted epoch resampling flags (#96), shared by every round path."""
     return (
@@ -360,6 +398,15 @@ def run_round(
     c_scale = (
         ["--c-scale", repr(args.c_scale)] if args.c_scale is not None else []
     )
+    # #27 opponent pool: a share of the round's games plays a frozen past
+    # snapshot instead of the current champion; the rest stays self-play.
+    pool: List[Path] = (
+        pool_snapshots(run_dir, r, args.opponent_pool_max)
+        if args.opponent_pool_prob > 0
+        else []
+    )
+    pool_games = round(args.games * args.opponent_pool_prob) if pool else 0
+    self_games = args.games - pool_games
     runner(
         tsx
         + [
@@ -367,7 +414,7 @@ def run_round(
             "--model",
             str(champ / "forge_pointer.onnx"),
             "--games",
-            str(args.games),
+            str(self_games),
             "--seed",
             str(args.seed + (r - 1) * args.games + 1),
             "--sims",
@@ -399,6 +446,35 @@ def run_round(
                 str(buffer / f"round_{r:04d}_expert.jsonl.gz"),
             ]
             + (["--expert-record", "both"] if args.expert_decisions else [])
+            + decks
+            + pick
+            + c_scale,
+            pn,
+        )
+    if pool_games > 0:
+        snapshot = pool[(r - 1) % len(pool)]
+        print(
+            f"round {r} pool: {len(pool)} snapshots; "
+            f"{pool_games} games vs {snapshot.name}",
+            flush=True,
+        )
+        runner(
+            tsx
+            + [
+                "scripts/selfplay-forge.ts",
+                "--model",
+                str(champ / "forge_pointer.onnx"),
+                "--opponent-model",
+                str(snapshot / "forge_pointer.onnx"),
+                "--games",
+                str(pool_games),
+                "--seed",
+                str(POOL_SEED_BASE + (r - 1) * pool_games + 1),
+                "--sims",
+                str(args.sims),
+                "--out",
+                str(buffer / f"round_{r:04d}_pool.jsonl.gz"),
+            ]
             + decks
             + pick
             + c_scale,
@@ -492,6 +568,7 @@ def run_round(
             "promote": promote,
             "elo": round(state["elo"], 1),
             "champion": state["champion"],
+            "pool_games": pool_games,
         }
     )
     if args.anchor_games > 0:
@@ -793,6 +870,20 @@ def build_parser() -> argparse.ArgumentParser:
         "manamind#96)",
     )
     ap.add_argument(
+        "--opponent-pool-prob",
+        type=float,
+        default=0.0,
+        help="#27 opponent pool: share of each round's games played against "
+        "a frozen past checkpoint instead of the current champion (0 off)",
+    )
+    ap.add_argument(
+        "--opponent-pool-max",
+        type=int,
+        default=3,
+        help="#27 opponent pool: max snapshots (rounds/0000 plus the most "
+        "recent earlier rounds)",
+    )
+    ap.add_argument(
         "--imitation-epochs",
         type=int,
         default=0,
@@ -939,6 +1030,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit("--anchor-games must be 0 or a positive even number")
     if args.expert_games < 0:
         raise SystemExit("--expert-games must be 0 or positive")
+    if not 0 <= args.opponent_pool_prob <= 1:
+        raise SystemExit("--opponent-pool-prob must be between 0 and 1")
+    if args.opponent_pool_max < 1:
+        raise SystemExit("--opponent-pool-max must be 1 or positive")
     if not 0 <= args.value_target_blend < 1.0:
         raise SystemExit("--value-target-blend must be 0 or below 1.0")
     if args.value_target_nstep < 0:
