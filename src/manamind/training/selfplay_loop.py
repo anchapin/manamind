@@ -91,7 +91,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import torch
-
 from manamind.models.forge_pointer import ForgePointerNet, load_pointer_net
 from manamind.training.train_selfplay import BUFFER_GAMES
 from manamind.training.train_selfplay import build_parser as train_parser
@@ -278,7 +277,7 @@ def pool_snapshots(run_dir: Path, r: int, pool_max: int) -> List[Path]:
     if rounds_dir / "0000" in have:
         pool.append(rounds_dir / "0000")
     keep = max(pool_max - 1, 0)
-    for d in have[len(have) - keep:] if keep else []:
+    for d in have[len(have) - keep :] if keep else []:
         if d not in pool:
             pool.append(d)
     return pool
