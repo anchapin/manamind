@@ -798,114 +798,129 @@ def test_value_target_nstep_default_is_omitted(tmp_path: Path) -> None:
     assert "--value-target-nstep" not in fakes.trains[0]
 
 
-def test_value_td_lambda_forwards_to_train(tmp_path: Path) -> None:
-    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
-    run(
+# --- #27 opponent pool ---
+
+
+def test_pool_snapshots_prefers_0000_then_recent(tmp_path: Path) -> None:
+    from manamind.training.selfplay_loop import pool_snapshots
+
+    run_dir = tmp_path / "run"
+    rounds = run_dir / "rounds"
+    for name, has_onnx in (("0000", True), ("0001", False), ("0002", True)):
+        d = rounds / name
+        d.mkdir(parents=True)
+        if has_onnx:
+            (d / "forge_pointer.onnx").write_bytes(b"")
+    # Round 1: only the bootstrap snapshot exists.
+    assert pool_snapshots(run_dir, 1, 3) == [rounds / "0000"]
+    # A round without a trained ONNX is skipped.
+    assert pool_snapshots(run_dir, 3, 3) == [rounds / "0000", rounds / "0002"]
+    # pool_max 1 keeps only the bootstrap snapshot.
+    assert pool_snapshots(run_dir, 3, 1) == [rounds / "0000"]
+    # Later rounds never see their own or future snapshots.
+    assert pool_snapshots(run_dir, 1, 3) == [rounds / "0000"]
+
+
+def test_pool_games_split_dispatched_and_recorded(tmp_path: Path) -> None:
+    fakes = Fakes([0.75, 0.4])
+    state = run(
         args(
             tmp_path,
+            "--games",
+            "100",
             "--rounds",
-            "3",
-            "--flat-rounds",
             "2",
-            "--value-td-lambda",
-            "0.7",
-        ),
-        fakes.runner,
-        fakes.trainer,
-    )
-    assert "--value-td-lambda" in fakes.trains[0]
-    assert (
-        fakes.trains[0][fakes.trains[0].index("--value-td-lambda") + 1]
-        == "0.7"
-    )
-
-
-def test_value_td_lambda_default_is_omitted(tmp_path: Path) -> None:
-    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
-    run(
-        args(tmp_path, "--rounds", "3", "--flat-rounds", "2"),
-        fakes.runner,
-        fakes.trainer,
-    )
-    assert "--value-td-lambda" not in fakes.trains[0]
-
-
-def test_value_td_lambda_and_nstep_rejected_together(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit):
-        main(
-            [
-                "--run-dir",
-                str(tmp_path),
-                "--pn-dir",
-                str(tmp_path),
-                "--rounds",
-                "3",
-                "--flat-rounds",
-                "2",
-                "--value-td-lambda",
-                "0.7",
-                "--value-target-nstep",
-                "2",
-            ]
-        )
-
-
-def test_value_td_refresh_forwards_to_train(tmp_path: Path) -> None:
-    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
-    run(
-        args(
-            tmp_path,
-            "--rounds",
-            "3",
-            "--flat-rounds",
-            "2",
-            "--value-td-lambda",
+            "--opponent-pool-prob",
             "0.5",
-            "--value-td-refresh",
-            "1",
         ),
         fakes.runner,
         fakes.trainer,
     )
-    assert "--value-td-refresh" in fakes.trains[0]
-    assert (
-        fakes.trains[0][fakes.trains[0].index("--value-td-refresh") + 1] == "1"
+    pool_cmds = [c for c in fakes.cmds if "--opponent-model" in c]
+    assert len(pool_cmds) == 2
+    # Both rounds play the bootstrap snapshot: the fake trainer writes no
+    # ONNX for the promoted candidate, so pool_snapshots skips it.
+    for cmd in pool_cmds:
+        assert cmd[cmd.index("--opponent-model") + 1].endswith(
+            "rounds/0000/forge_pointer.onnx"
+        )
+    # Pool games: 50 per round, seeds in their own 7M block.
+    assert pool_cmds[0][pool_cmds[0].index("--games") + 1] == "50"
+    assert pool_cmds[0][pool_cmds[0].index("--seed") + 1] == "7000001"
+    assert pool_cmds[1][pool_cmds[1].index("--seed") + 1] == "7000051"
+    assert pool_cmds[0][pool_cmds[0].index("--out") + 1].endswith(
+        "round_0001_pool.jsonl.gz"
     )
+    # Self-play covers the rest of the round's games, same seeds as before.
+    sp0 = fakes.cmds[0]
+    assert sp0[sp0.index("--games") + 1] == "50"
+    assert sp0[sp0.index("--seed") + 1] == "1"
+    # Total per round is unchanged and the history row records the split.
+    assert state["games_total"] == 200
+    assert state["history"][0]["pool_games"] == 50
+    assert state["history"][1]["pool_games"] == 50
 
 
-def test_value_td_refresh_default_is_omitted(tmp_path: Path) -> None:
-    fakes = Fakes([0.5, 0.45, 0.6, 0.4])
-    run(
+def test_pool_cycles_through_snapshots_on_resume(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    for name in ("0000", "0001"):
+        d = run_dir / "rounds" / name
+        d.mkdir(parents=True)
+        (d / "forge_pointer.onnx").write_bytes(b"")
+    (run_dir / "loop.json").write_text(
+        json.dumps(
+            {
+                "round": 1,
+                "champion": "rounds/0001",
+                "elo": 50.0,
+                "flat": 0,
+                "rises": 1,
+                "games_total": 100,
+                "stopped": None,
+                "history": [],
+            }
+        )
+    )
+    fakes = Fakes([0.6])
+    state = run(
         args(
             tmp_path,
+            "--games",
+            "100",
             "--rounds",
-            "3",
-            "--flat-rounds",
-            "2",
-            "--value-td-lambda",
-            "0.7",
+            "1",
+            "--opponent-pool-prob",
+            "0.5",
         ),
         fakes.runner,
         fakes.trainer,
     )
-    assert "--value-td-refresh" not in fakes.trains[0]
+    pool_cmds = [c for c in fakes.cmds if "--opponent-model" in c]
+    assert len(pool_cmds) == 1
+    # Second pool round: the cycle index picks the second snapshot.
+    assert pool_cmds[0][pool_cmds[0].index("--opponent-model") + 1].endswith(
+        "rounds/0001/forge_pointer.onnx"
+    )
+    assert state["history"][0]["pool_games"] == 50
 
 
-def test_value_td_refresh_negative_rejected(tmp_path: Path) -> None:
+def test_pool_disabled_by_default(tmp_path: Path) -> None:
+    fakes = Fakes([0.75, 0.4])
+    state = run(
+        args(tmp_path, "--games", "100", "--rounds", "2"), fakes.runner, fakes.trainer
+    )
+    assert not [c for c in fakes.cmds if "--opponent-model" in c]
+    assert all(row["pool_games"] == 0 for row in state["history"])
+
+
+def test_opponent_pool_args_validate() -> None:
+    base = [
+        "--run-dir",
+        "run",
+        "--pn-dir",
+        ".",
+    ]
     with pytest.raises(SystemExit):
-        main(
-            [
-                "--run-dir",
-                str(tmp_path),
-                "--pn-dir",
-                str(tmp_path),
-                "--rounds",
-                "3",
-                "--flat-rounds",
-                "2",
-                "--value-td-lambda",
-                "0.7",
-                "--value-td-refresh",
-                "-1",
-            ]
-        )
+        main(base + ["--opponent-pool-prob", "1.5"])
+    with pytest.raises(SystemExit):
+        main(base + ["--opponent-pool-max", "0"])
