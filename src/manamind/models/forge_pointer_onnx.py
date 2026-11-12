@@ -10,6 +10,8 @@ same Forge-bridge view (Planar Nexus ``playerView``):
   lower-cased name mod ``NAME_BUCKETS``), and a 0/1 mask ``[n]``;
 * per graveyard (``gy``, ``ogy``): name buckets and a mask;
 * ``glob``: ``global_features`` ``[GLOBAL_FEATURES]``;
+* ``hist``: opponent-history features ``[HISTORY_FEATURES]`` built from
+  the decision's optional ``opp_history`` summary (zeros when absent);
 * option lists for the three heads: priority cards plus ``[land, spell]``
   flags, attackers, blockers, and the attacking creatures to block.
 
@@ -44,6 +46,8 @@ from manamind.models.forge_pointer import (
     DECK_BUCKETS,
     DECK_DIM,
     GLOBAL_FEATURES,
+    HISTORY_FEATURES,
+    HISTORY_FIELDS,
     NAME_BUCKETS,
     NAME_DIM,
     PHASES,
@@ -56,15 +60,17 @@ from manamind.models.forge_pointer import (
     global_features,
     load_pointer_net,
     name_bucket,
+    opp_history_features,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ZONES = ("hand", "bf", "obf")
 GRAVES = ("gy", "ogy")
 INPUT_NAMES: Tuple[str, ...] = (
     *(f"{z}_{k}" for z in ZONES for k in ("x", "id", "m")),
     *(f"{g}_{k}" for g in GRAVES for k in ("id", "m")),
     "glob",
+    "hist",
     "pri_x",
     "pri_id",
     "pri_flags",
@@ -146,6 +152,7 @@ class PointerExport(nn.Module):
                     a["glob"],
                     net.deck_emb(a["own_deck"].long()).reshape(-1),
                     net.deck_emb(a["opp_deck"].long()).reshape(-1),
+                    a["hist"],
                 ]
             )
         )
@@ -212,6 +219,55 @@ def _names(names: Sequence[str]) -> Tuple[np.ndarray, np.ndarray]:
     return ids, np.ones(len(names), np.float32)
 
 
+def _hist_sample() -> Dict[str, Any]:
+    """A minimal but complete ``opp_history`` for the trace sample."""
+    return {
+        "turn": 5,
+        "buckets": [
+            {
+                "landsPlayed": 1,
+                "creaturesPlayed": 1,
+                "otherPermanentsPlayed": 0,
+                "creaturesToGraveyard": 0,
+                "otherToGraveyard": 0,
+                "handSizeSum": 5,
+                "handSizeSamples": 1,
+            },
+            {
+                "landsPlayed": 1,
+                "creaturesPlayed": 2,
+                "otherPermanentsPlayed": 0,
+                "creaturesToGraveyard": 1,
+                "otherToGraveyard": 0,
+                "handSizeSum": 12,
+                "handSizeSamples": 2,
+            },
+            {},
+            {},
+        ],
+        "totals": {
+            "landsPlayed": 2,
+            "creaturesPlayed": 3,
+            "otherPermanentsPlayed": 0,
+            "creaturesToGraveyard": 1,
+            "otherToGraveyard": 0,
+            "observations": 6,
+        },
+        "oppManaPool": {
+            "W": 0,
+            "U": 0,
+            "B": 0,
+            "R": 2,
+            "G": 0,
+            "C": 0,
+            "other": 0,
+        },
+        "oppAttackersThisCombat": 0,
+        "oppBlockersThisCombat": 0,
+        "oppGraveyardSize": 3,
+    }
+
+
 def pack(d: Decision) -> Inputs:
     """Graph inputs for one decision (the reference a host mirrors)."""
     out: Inputs = {}
@@ -222,6 +278,7 @@ def pack(d: Decision) -> Inputs:
         ids, m = _names(d.get(key, []))
         out.update({f"{grave}_id": ids, f"{grave}_m": m})
     out["glob"] = np.asarray(global_features(d), np.float32)
+    out["hist"] = np.asarray(opp_history_features(d), np.float32)
     out["own_deck"] = np.asarray(
         [deck_bucket(str(d["deck"])) if d.get("deck") else 0], np.int64
     )
@@ -287,6 +344,17 @@ def schema(net: ForgePointerNet) -> Dict[str, Any]:
         "deck_dim": DECK_DIM,
         "deck_hash": "0 unknown; else 1 + crc32(deck.lower() utf-8) % 255",
         "deck_fields": ["deck", "opp_deck"],
+        "history_features": HISTORY_FEATURES,
+        "history_fields": list(HISTORY_FIELDS),
+        "history_source": (
+            'decision "opp_history": the OpponentHistorySummary the '
+            "planar-nexus tracker emits; a decision without it maps "
+            "to all zeros"
+        ),
+        "history_scale": (
+            "counts and mana /10, hand size avg /7 (bucket sum over "
+            "samples), samples /16, observations /200, graveyard /20"
+        ),
         "value_head_routing": "matchup" if net.matchup_decks else "shared",
         "type_words": list(TYPE_WORDS),
         "pips": list(PIPS),
@@ -309,12 +377,13 @@ def export(net: ForgePointerNet, out_dir: Path) -> Path:
             "attackers": [{}],
             "deck": "red",
             "opp_deck": "green",
+            "opp_history": _hist_sample(),
         }
     )
     args = tuple(torch.from_numpy(sample[n]) for n in INPUT_NAMES)
     axes: Dict[str, Dict[int, str]] = {}
     for name in INPUT_NAMES:
-        if name not in ("glob", "own_deck", "opp_deck"):
+        if name not in ("glob", "hist", "own_deck", "opp_deck"):
             axes[name] = {0: f"n_{name.split('_')[0]}"}
     axes["priority"] = {0: "n_pri_plus_pass"}
     axes["attack"] = {0: "n_att"}

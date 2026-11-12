@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -19,10 +20,15 @@ from test_forge_pointer import (  # noqa: E402
     FOREST,
     PRIORITY,
     VIEW,
+    _history_summary,
 )
 
 from manamind.models import forge_pointer_onnx as fo  # noqa: E402
-from manamind.models.forge_pointer import ForgePointerNet  # noqa: E402
+from manamind.models.forge_pointer import (  # noqa: E402
+    HISTORY_FEATURES,
+    ForgePointerNet,
+    opp_history_features,
+)
 
 TOL = 1e-5
 
@@ -110,3 +116,36 @@ def test_schema_and_graph_carry_deck_identity(tmp_path: Path) -> None:
     schema = json.loads((tmp_path / "forge_pointer.schema.json").read_text())
     assert schema["deck_buckets"] == 256
     assert schema["deck_fields"] == ["deck", "opp_deck"]
+
+
+def test_pack_emits_history_vector() -> None:
+    with_hist = dict(PRIORITY, opp_history=_history_summary())
+    packed = fo.pack(with_hist)
+    assert np.allclose(packed["hist"], opp_history_features(with_hist))
+    legacy = fo.pack({"t": "priority"})
+    assert legacy["hist"].tolist() == [0.0] * HISTORY_FEATURES
+
+
+def test_schema_and_graph_carry_history(tmp_path: Path) -> None:
+    import onnx
+
+    net = _net()
+    path = fo.export(net, tmp_path)
+    graph = onnx.load(str(path)).graph
+    graph_inputs = [i.name for i in graph.input]
+    assert "hist" in graph_inputs
+    assert graph_inputs == list(fo.INPUT_NAMES)
+    schema = json.loads((tmp_path / "forge_pointer.schema.json").read_text())
+    assert schema["schema_version"] == 3
+    assert schema["history_features"] == HISTORY_FEATURES
+    assert len(schema["history_fields"]) == HISTORY_FEATURES
+    assert "opp_history" in schema["history_source"]
+
+
+def test_export_with_history_matches_pytorch(tmp_path: Path) -> None:
+    net = _net()
+    model = fo.export(net, tmp_path)
+    with_hist = dict(
+        VIEW, t="priority", options=[], opp_history=_history_summary()
+    )
+    assert fo.max_abs_diff(net, model, [with_hist]) < TOL
