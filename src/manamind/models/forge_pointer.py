@@ -851,3 +851,141 @@ def load_pointer_net(
         # Surface the real mismatch instead of a silently partial load.
         net.load_state_dict(state, strict=True)
     return net, ckpt.get("meta")
+
+
+class OppDeckProbe(nn.Module):
+    """Auxiliary opponent-deck probe from history alone (manamind #44).
+
+    A standalone diagnostic head: given only the packed ``opp_history``
+    summary (the 39-wide ``hist`` input), it predicts the opponent's
+    deck bucket. The policy and value paths never touch it, so
+    checkpoints and the ONNX graph are unchanged and the base
+    optimizer's updates are identical with the probe on or off; the
+    probe keeps its own optimizer. Free supervision: in self-play the
+    opponent's deck is known, and per-turn accuracy answers the issue's
+    diagnostic, how many turns until the history identifies the deck.
+    """
+
+    def __init__(self, hidden: int = 64) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(HISTORY_FEATURES, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, DECK_BUCKETS),
+        )
+
+    def _device(self) -> torch.device:
+        proj = self.mlp[0]
+        assert isinstance(proj, nn.Linear)
+        return proj.weight.device
+
+    def logits(self, decisions: Sequence[Decision]) -> torch.Tensor:
+        """``[n, DECK_BUCKETS]`` logits from the decisions' history."""
+        feats = torch.tensor(
+            [opp_history_features(d) for d in decisions],
+            dtype=torch.float32,
+            device=self._device(),
+        )
+        out: torch.Tensor = self.mlp(feats)
+        return out
+
+
+def opp_deck_labels(
+    decisions: Sequence[Decision],
+) -> List[Optional[int]]:
+    """The probe's label per decision; ``None`` when the deck is unknown."""
+    return [
+        deck_bucket(str(d["opp_deck"])) if d.get("opp_deck") else None
+        for d in decisions
+    ]
+
+
+def _opp_deck_turn_bucket(turn: int) -> str:
+    """Turn bucket for the probe's accuracy diagnostic (#44)."""
+    if turn <= 1:
+        return "t01"
+    if turn <= 3:
+        return "t23"
+    return "t4p"
+
+
+_PROBE_TURN_BUCKETS = ("t01", "t23", "t4p")
+
+
+def _probe_stats(
+    correct: Sequence[float],
+    turns: Sequence[int],
+    loss_value: float = 0.0,
+) -> Dict[str, float]:
+    stats: Dict[str, float] = {
+        "opp_deck_loss": loss_value,
+        "opp_deck_labeled": float(len(correct)),
+        "opp_deck_acc": sum(correct) / len(correct) if correct else 0.0,
+    }
+    for bucket in _PROBE_TURN_BUCKETS:
+        sel = [
+            c
+            for c, t in zip(correct, turns)
+            if _opp_deck_turn_bucket(t) == bucket
+        ]
+        stats[f"opp_deck_acc_{bucket}"] = sum(sel) / len(sel) if sel else 0.0
+    return stats
+
+
+def opp_deck_loss(
+    probe: OppDeckProbe,
+    decisions: Sequence[Decision],
+    weight: float = 1.0,
+) -> Tuple[Optional[torch.Tensor], Dict[str, float]]:
+    """Probe cross-entropy against each decision's known opponent deck.
+
+    Rows without an opponent deck name (the unknown bucket) are masked
+    out; ``loss`` is ``None`` when no row carries a label, so the
+    caller skips the probe step. Stats always carry every key so batch
+    means stay well-formed.
+    """
+    labels = opp_deck_labels(decisions)
+    idx = [i for i, lab in enumerate(labels) if lab is not None]
+    if not idx:
+        return None, _probe_stats([], [])
+    logits = probe.logits(decisions)
+    target = logits.new_tensor([labels[i] for i in idx], dtype=torch.long)
+    loss = weight * F.cross_entropy(logits[idx], target)
+    with torch.no_grad():
+        correct = (logits[idx].argmax(-1) == target).to(torch.float32).tolist()
+        turns = [int(float(decisions[i].get("turn", 0))) for i in idx]
+    return loss, _probe_stats(correct, turns, float(loss.detach()))
+
+
+def opp_deck_eval(
+    probe: OppDeckProbe,
+    decisions: Sequence[Decision],
+    batch: int = 512,
+) -> Dict[str, float]:
+    """Probe accuracy stats without gradients, batched over rows."""
+    was_training = probe.training
+    probe.eval()
+    labels = opp_deck_labels(decisions)
+    idx = [i for i, lab in enumerate(labels) if lab is not None]
+    correct: List[float] = []
+    turns: List[int] = []
+    if idx:
+        with torch.no_grad():
+            for start in range(0, len(idx), batch):
+                chunk = idx[start : start + batch]
+                logits = probe.logits([decisions[i] for i in chunk])
+                target = logits.new_tensor(
+                    [labels[i] for i in chunk], dtype=torch.long
+                )
+                correct += (
+                    (logits.argmax(-1) == target).to(torch.float32).tolist()
+                )
+                turns += [
+                    int(float(decisions[i].get("turn", 0))) for i in chunk
+                ]
+    if was_training:
+        probe.train()
+    stats = _probe_stats(correct, turns)
+    # Accuracy read: the loss key is a training-only stat.
+    stats.pop("opp_deck_loss", None)
+    return stats
