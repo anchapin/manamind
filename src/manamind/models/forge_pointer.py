@@ -72,6 +72,34 @@ CARD_FEATURES = len(TYPE_WORDS) + 5 + len(PIPS) + 1
 GLOBAL_FEATURES = 10 + len(PHASES) + 1 + len(DECISION_TYPES)
 _COST_SYMBOL = re.compile(r"\{([^}]*)\}")
 
+# Opponent-history features (manamind #44): the summary planar-nexus's
+# OpponentHistoryTracker emits, flattened to a fixed-size vector. Legacy
+# decisions without an "opp_history" key map to all zeros, so buffers and
+# checkpoints recorded before schema v3 train unchanged.
+HISTORY_TURN_BUCKETS = 4
+HISTORY_COUNT_FIELDS = (
+    "landsPlayed",
+    "creaturesPlayed",
+    "otherPermanentsPlayed",
+    "creaturesToGraveyard",
+    "otherToGraveyard",
+    "handSizeSum",
+    "handSizeSamples",
+)
+HISTORY_FIELDS = [
+    *(
+        f"buckets[{i}].{name}"
+        for i in range(HISTORY_TURN_BUCKETS)
+        for name in HISTORY_COUNT_FIELDS
+    ),
+    "totals.observations",
+    *(f"oppManaPool.{c}" for c in ("W", "U", "B", "R", "G", "C", "other")),
+    "oppAttackersThisCombat",
+    "oppBlockersThisCombat",
+    "oppGraveyardSize",
+]
+HISTORY_FEATURES = len(HISTORY_FIELDS)
+
 
 def name_bucket(name: str) -> int:
     """Stable hash of a card name into ``NAME_BUCKETS`` buckets."""
@@ -136,6 +164,48 @@ def global_features(d: Decision) -> List[float]:
     return feats
 
 
+def opp_history_features(d: Decision) -> List[float]:
+    """Flatten a decision's optional ``opp_history`` summary (manamind #44).
+
+    Reads the ``OpponentHistorySummary`` planar-nexus's tracker emits:
+    ``HISTORY_TURN_BUCKETS`` turn buckets (oldest first), then the
+    totals' observation count, the opponent mana pool and the live
+    combat counts, laid out in :data:`HISTORY_FIELDS` order. Counts and
+    mana scale by 10, hand size averages by 7 (the bucket's sum over its
+    samples), samples by 16, observations by 200 and the graveyard by
+    20. A decision with no ``opp_history`` (every buffer recorded before
+    schema v3) maps to all zeros, so old data trains unchanged.
+    """
+    hist = d.get("opp_history") or {}
+    feats: List[float] = []
+    buckets = list(hist.get("buckets") or [])[:HISTORY_TURN_BUCKETS]
+    buckets += [{}] * (HISTORY_TURN_BUCKETS - len(buckets))
+    for bucket in buckets:
+        samples = max(float(bucket.get("handSizeSamples", 0)), 1.0)
+        feats += [
+            float(bucket.get("landsPlayed", 0)) / 10.0,
+            float(bucket.get("creaturesPlayed", 0)) / 10.0,
+            float(bucket.get("otherPermanentsPlayed", 0)) / 10.0,
+            float(bucket.get("creaturesToGraveyard", 0)) / 10.0,
+            float(bucket.get("otherToGraveyard", 0)) / 10.0,
+            float(bucket.get("handSizeSum", 0)) / samples / 7.0,
+            float(bucket.get("handSizeSamples", 0)) / 16.0,
+        ]
+    totals = hist.get("totals") or {}
+    feats.append(float(totals.get("observations", 0)) / 200.0)
+    pool = hist.get("oppManaPool") or {}
+    feats += [
+        float(pool.get(c, 0)) / 10.0
+        for c in ("W", "U", "B", "R", "G", "C", "other")
+    ]
+    feats += [
+        float(hist.get("oppAttackersThisCombat", 0)) / 10.0,
+        float(hist.get("oppBlockersThisCombat", 0)) / 10.0,
+        float(hist.get("oppGraveyardSize", 0)) / 20.0,
+    ]
+    return feats
+
+
 @dataclass
 class ActOutput:
     """One decision's reply plus what training needs."""
@@ -170,7 +240,7 @@ class ForgePointerNet(nn.Module):
             nn.ReLU(),
         )
         zones = 3 * 2 * card_dim + 2 * NAME_DIM
-        state_in = zones + GLOBAL_FEATURES + 2 * DECK_DIM
+        state_in = zones + GLOBAL_FEATURES + 2 * DECK_DIM + HISTORY_FEATURES
         self.state_mlp = nn.Sequential(
             nn.Linear(state_in, state_dim),
             nn.ReLU(),
@@ -272,6 +342,11 @@ class ForgePointerNet(nn.Module):
                 global_features(d), dtype=torch.float32, device=self._device()
             ),
             self.deck_identity(d),
+            torch.tensor(
+                opp_history_features(d),
+                dtype=torch.float32,
+                device=self._device(),
+            ),
         ]
         state: torch.Tensor = self.state_mlp(torch.cat(parts))
         return state
@@ -727,11 +802,12 @@ def load_pointer_net(
 ) -> Tuple[ForgePointerNet, Optional[dict]]:
     """Load a checkpoint written by ``train_forge``.
 
-    Checkpoints written before the deck-identity inputs (manamind #96) carry
-    a narrower ``state_mlp`` input projection and no ``deck_emb``; their
+    Checkpoints written before the deck-identity inputs (manamind #96) or
+    the opponent-history inputs (manamind #44) carry a narrower
+    ``state_mlp`` input projection (and no ``deck_emb`` for v1); their
     projection columns are zero-padded and the zero-initialized deck
-    embeddings are left at zero, so the loaded net is exactly the v1 net at
-    step 0. Loading a shared-head checkpoint into a matchup net
+    embeddings are left at zero, so the loaded net is exactly the older
+    net at step 0. Loading a shared-head checkpoint into a matchup net
     (``matchup_decks`` given here, or carried in the checkpoint config)
     re-copies the loaded base value head into every matchup head, so the
     routed net starts exactly where the shared-head net left off.
@@ -753,14 +829,16 @@ def load_pointer_net(
     proj = net.state_mlp[0]
     assert isinstance(proj, nn.Linear)
     if w is not None and w.shape[1] != proj.in_features:
-        v1_width = proj.in_features - 2 * DECK_DIM
-        if w.shape[1] != v1_width:
+        v2_width = proj.in_features - HISTORY_FEATURES
+        v1_width = v2_width - 2 * DECK_DIM
+        if w.shape[1] not in (v2_width, v1_width):
             raise ValueError(
                 "state_mlp.0.weight has width "
                 f"{w.shape[1]}; expected {proj.in_features} "
-                f"(schema v2) or {v1_width} (schema v1)"
+                f"(schema v3), {v2_width} (schema v2) or "
+                f"{v1_width} (schema v1)"
             )
-        pad = torch.zeros(w.shape[0], 2 * DECK_DIM)
+        pad = torch.zeros(w.shape[0], proj.in_features - w.shape[1])
         state["state_mlp.0.weight"] = torch.cat([w, pad], dim=1)
     loaded = net.load_state_dict(state, strict=False)
     if net.matchup_decks and not any(

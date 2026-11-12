@@ -13,6 +13,7 @@ from manamind.models.forge_pointer import (
     DECK_BUCKETS,
     DECK_DIM,
     GLOBAL_FEATURES,
+    HISTORY_FEATURES,
     NAME_DIM,
     ActOutput,
     ForgePointerNet,
@@ -23,6 +24,7 @@ from manamind.models.forge_pointer import (
     imitation_loss,
     life_potential,
     load_pointer_net,
+    opp_history_features,
     shaped_returns,
 )
 from manamind.training.train_forge import (
@@ -92,6 +94,55 @@ BLOCK = dict(
     attackers=[BEAR],
     blockers=[BEAR, BEAR, BEAR],
 )
+
+
+def _history_summary() -> dict:
+    """A small but complete ``OpponentHistorySummary`` from the tracker."""
+    return {
+        "turn": 5,
+        "buckets": [
+            {
+                "landsPlayed": 1,
+                "creaturesPlayed": 1,
+                "otherPermanentsPlayed": 0,
+                "creaturesToGraveyard": 0,
+                "otherToGraveyard": 0,
+                "handSizeSum": 5,
+                "handSizeSamples": 1,
+            },
+            {
+                "landsPlayed": 1,
+                "creaturesPlayed": 2,
+                "otherPermanentsPlayed": 0,
+                "creaturesToGraveyard": 1,
+                "otherToGraveyard": 0,
+                "handSizeSum": 12,
+                "handSizeSamples": 2,
+            },
+            {},
+            {},
+        ],
+        "totals": {
+            "landsPlayed": 2,
+            "creaturesPlayed": 3,
+            "otherPermanentsPlayed": 0,
+            "creaturesToGraveyard": 1,
+            "otherToGraveyard": 0,
+            "observations": 6,
+        },
+        "oppManaPool": {
+            "W": 0,
+            "U": 0,
+            "B": 0,
+            "R": 2,
+            "G": 0,
+            "C": 0,
+            "other": 0,
+        },
+        "oppAttackersThisCombat": 0,
+        "oppBlockersThisCombat": 0,
+        "oppGraveyardSize": 3,
+    }
 
 
 def test_feature_sizes_and_pips() -> None:
@@ -468,8 +519,64 @@ def test_deck_dim_is_the_warm_start_pad() -> None:
     zones = 3 * 2 * ForgePointerNet().card_dim + 2 * NAME_DIM
     net = ForgePointerNet()
     assert (
-        net.state_mlp[0].in_features == zones + GLOBAL_FEATURES + 2 * DECK_DIM
+        net.state_mlp[0].in_features
+        == zones + GLOBAL_FEATURES + 2 * DECK_DIM + HISTORY_FEATURES
     )
+
+
+def test_opp_history_features_layout() -> None:
+    summary = _history_summary()
+    feats = opp_history_features(dict(PRIORITY, opp_history=summary))
+    assert len(feats) == HISTORY_FEATURES
+    # Buckets are oldest first; a bucket's played count scales by 10.
+    assert feats[0] == 1 / 10
+    # Hand size average: the bucket's sum over its samples, scaled by 7.
+    assert feats[5] == pytest.approx(5 / 1 / 7)
+    assert feats[7 + 5] == pytest.approx(12 / 2 / 7)
+    # Empty buckets flatten to zeros, as does a missing opp_history.
+    assert feats[14:28] == [0.0] * 14
+    assert opp_history_features(PRIORITY) == [0.0] * HISTORY_FEATURES
+    assert (
+        opp_history_features({"opp_history": {}}) == [0.0] * HISTORY_FEATURES
+    )
+    # Totals' observations open the tail; the mana pool follows, red
+    # scaled by 10.
+    assert feats[28] == pytest.approx(6 / 200)
+    assert feats[28 + 4] == 0.2
+    # Live combat counts and the graveyard close the vector.
+    assert feats[-3:] == [0.0, 0.0, 3 / 20]
+
+
+def test_opp_history_partial_summary_pads_to_zeros() -> None:
+    summary = _history_summary()
+    partial = opp_history_features(
+        {"opp_history": {"buckets": summary["buckets"][:1]}}
+    )
+    full = opp_history_features({"opp_history": summary})
+    assert partial[:7] == full[:7]
+    assert partial[7:] == [0.0] * (HISTORY_FEATURES - 7)
+
+
+def test_load_pointer_net_pads_a_v2_checkpoint(tmp_path: Path) -> None:
+    net = ForgePointerNet()
+    zones = 3 * 2 * net.card_dim + 2 * NAME_DIM
+    state = net.state_dict()
+    state["state_mlp.0.weight"] = state["state_mlp.0.weight"][
+        :, : zones + GLOBAL_FEATURES + 2 * DECK_DIM
+    ]
+    path = tmp_path / "v2.pt"
+    torch.save({"network": state, "config": {}}, path)
+    loaded, _ = load_pointer_net(str(path))
+    with torch.no_grad():
+        # The zero-padded history columns make the loaded net exactly the
+        # v2 net, opp_history included: identity starts as no-op.
+        with_hist = dict(PRIORITY, opp_history=_history_summary())
+        assert torch.equal(
+            loaded.encode_state(with_hist), net.encode_state(PRIORITY)
+        )
+        assert torch.equal(
+            loaded.encode_state(PRIORITY), net.encode_state(PRIORITY)
+        )
 
 
 def test_net_size_kwargs_defaults_empty() -> None:
