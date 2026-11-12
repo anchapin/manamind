@@ -31,8 +31,11 @@ import torch.nn as nn
 
 from manamind.models.forge_pointer import (
     ForgePointerNet,
+    OppDeckProbe,
     distill_loss,
     load_pointer_net,
+    opp_deck_eval,
+    opp_deck_loss,
 )
 from manamind.training.audit_labels import audit_decision
 
@@ -171,12 +174,20 @@ def train_epochs(
     seed: int = 0,
     log: Optional[List[Dict[str, Any]]] = None,
     weights: Optional[Sequence[float]] = None,
+    probe: Optional[OppDeckProbe] = None,
+    probe_opt: Optional[torch.optim.Optimizer] = None,
+    opp_deck_weight: float = 1.0,
 ) -> Dict[str, float]:
     """Minibatch passes over ``samples``; returns the last epoch's means.
 
     With ``weights``, each epoch draws ``len(samples)`` indices with
     replacement weighted by ``weights`` (weighted resampling); otherwise
     it shuffles uniformly.
+
+    With ``probe``, the opponent-deck probe (manamind #44) trains
+    alongside on the same rows: its own optimizer and parameters, so the
+    base loss, gradients and clipping are unchanged and its stats join
+    the returned means (``opp_deck_*`` keys).
     """
     if not samples:
         raise ValueError("no self-play decisions to train on")
@@ -205,6 +216,17 @@ def train_epochs(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             opt.step()
+            if probe is not None and probe_opt is not None:
+                aux, aux_stats = opp_deck_loss(
+                    probe, [d for d, _ in chunk], opp_deck_weight
+                )
+                if aux is not None:
+                    probe_opt.zero_grad()
+                    aux.backward()
+                    torch.nn.utils.clip_grad_norm_(probe.parameters(), 1.0)
+                    probe_opt.step()
+                for k, v in aux_stats.items():
+                    totals[k] = totals.get(k, 0.0) + v
             for k, v in stats.items():
                 totals[k] = totals.get(k, 0.0) + v
             n += 1
@@ -724,6 +746,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     else:
         net, parent_games = ForgePointerNet(matchup_decks=matchup), 0
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
+    probe: Optional[OppDeckProbe] = None
+    probe_opt: Optional[torch.optim.Optimizer] = None
+    if args.opp_deck_weight > 0:
+        probe = OppDeckProbe().to(next(net.parameters()).device)
+        probe_opt = torch.optim.Adam(probe.parameters(), lr=args.lr)
     if args.value_target_nstep > 0 and args.flush_value_head:
         raise ValueError(
             "--flush-value-head resets the value head the n-step targets"
@@ -848,6 +875,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             seed=args.seed + (args.epochs - epochs_left),
             log=history,
             weights=weights,
+            probe=probe,
+            probe_opt=probe_opt,
+            opp_deck_weight=args.opp_deck_weight,
         )
         epochs_left -= seg
     value_td_online_meta: Dict[str, Any] = {}
@@ -920,6 +950,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                 value_coef=args.value_coef,
                 seed=args.seed + 9000,
                 log=im_history,
+                probe=probe,
+                probe_opt=probe_opt,
+                opp_deck_weight=args.opp_deck_weight,
             )
             if args.imitation_lr_scale != 1.0:
                 for group in opt.param_groups:
@@ -944,6 +977,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     if net.matchup_decks:
         meta["matchup_decks"] = list(net.matchup_decks)
         meta["matchup_value_heads"] = len(net.matchup_value_heads)
+    if probe is not None:
+        meta["opp_deck_weight"] = args.opp_deck_weight
+        meta["opp_deck_probe_holdout"] = opp_deck_eval(
+            probe, [d for d, _ in holdout]
+        )
     save_checkpoint(net, opt, args.out, meta)
     if args.onnx:
         from manamind.models.forge_pointer_onnx import export
@@ -1083,6 +1121,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--flush-value-head",
         action="store_true",
         help="re-initialize the value head after loading --init",
+    )
+    ap.add_argument(
+        "--opp-deck-weight",
+        type=float,
+        default=1.0,
+        help=(
+            "Opponent-deck probe weight (manamind #44); the probe is a"
+            " standalone history-only diagnostic head with its own"
+            " optimizer, so 0 disables it and any positive value leaves"
+            " the base training unchanged."
+        ),
     )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
