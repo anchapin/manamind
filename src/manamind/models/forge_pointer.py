@@ -875,7 +875,9 @@ class OppDeckProbe(nn.Module):
         )
 
     def _device(self) -> torch.device:
-        return self.mlp[0].weight.device
+        proj = self.mlp[0]
+        assert isinstance(proj, nn.Linear)
+        return proj.weight.device
 
     def logits(self, decisions: Sequence[Decision]) -> torch.Tensor:
         """``[n, DECK_BUCKETS]`` logits from the decisions' history."""
