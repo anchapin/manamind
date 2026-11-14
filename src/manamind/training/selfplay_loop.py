@@ -427,6 +427,8 @@ def run_round(
         + c_scale,
         pn,
     )
+    if args.no_opp_history:
+        strip_opp_history(buffer / f"round_{r:04d}.jsonl.gz")
     if args.expert_games > 0:
         runner(
             tsx
@@ -451,6 +453,8 @@ def run_round(
             + c_scale,
             pn,
         )
+        if args.no_opp_history:
+            strip_opp_history(buffer / f"round_{r:04d}_expert.jsonl.gz")
     if pool_games > 0:
         snapshot = pool[(r - 1) % len(pool)]
         print(
@@ -1017,11 +1021,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fork probes train from a re-initialized value head",
     )
+    ap.add_argument(
+        "--no-opp-history",
+        action="store_true",
+        help="fair test manamind#44: strip opp_history from recorded rows",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--force", action="store_true", help="resume after the kill switch"
     )
     return ap
+
+
+def strip_opp_history(path: Path) -> None:
+    """Fair test manamind#44: drop each decision's opp_history in place.
+
+    Decisions without opp_history train as zeros, so this is the
+    no-history control arm: the history features are absent from the
+    buffer and the deck probe sits at chance.
+    """
+    import gzip
+
+    tmp = path.with_suffix(".gz.tmp")
+    with gzip.open(path, "rt") as src, gzip.open(tmp, "wt") as dst:
+        for line in src:
+            game = json.loads(line)
+            for decision in game.get("decisions", []):
+                decision.pop("opp_history", None)
+            dst.write(json.dumps(game) + "\n")
+    tmp.replace(path)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
