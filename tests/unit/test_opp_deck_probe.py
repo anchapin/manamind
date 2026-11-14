@@ -99,6 +99,23 @@ def test_eval_reports_mixed_buckets() -> None:
     assert abs(stats["opp_deck_acc"] - 2.0 / 3.0) < 1e-6
     assert stats["opp_deck_acc_t01"] == 1.0
     assert abs(stats["opp_deck_acc_t4p"] - 0.5) < 1e-6
+    # Composition reads: one t01 row (red), two t4p rows split 1/1.
+    assert stats["opp_deck_n_t01"] == 1.0
+    assert stats["opp_deck_n_t4p"] == 2.0
+    assert stats["opp_deck_major"] == 2.0 / 3.0
+    assert stats["opp_deck_major_t01"] == 1.0
+    assert stats["opp_deck_major_t4p"] == 0.5
+
+
+def test_stats_report_composition_on_unlabeled_rows() -> None:
+    probe = _forced_probe("red deck")
+    decisions = [_decision(0, "red deck"), _decision(1)]
+    _, stats = opp_deck_loss(probe, decisions)
+    assert stats["opp_deck_labeled"] == 1.0
+    assert stats["opp_deck_n_t01"] == 1.0
+    assert stats["opp_deck_n_t23"] == 0.0
+    assert stats["opp_deck_major_t01"] == 1.0
+    assert stats["opp_deck_major_t23"] == 0.0
 
 
 def test_training_reduces_loss() -> None:
