@@ -912,16 +912,38 @@ def _opp_deck_turn_bucket(turn: int) -> str:
 _PROBE_TURN_BUCKETS = ("t01", "t23", "t4p")
 
 
+def _majority_share(labels: Sequence[Optional[int]]) -> float:
+    counts: Dict[int, int] = {}
+    for lab in labels:
+        if lab is None:
+            continue
+        counts[lab] = counts.get(lab, 0) + 1
+    total = sum(counts.values())
+    return max(counts.values()) / total if total else 0.0
+
+
 def _probe_stats(
     correct: Sequence[float],
     turns: Sequence[int],
     loss_value: float = 0.0,
+    labels: Optional[Sequence[Optional[int]]] = None,
 ) -> Dict[str, float]:
+    """Accuracy by turn bucket, plus composition when labels are known.
+
+    ``opp_deck_n_<bucket>`` counts the bucket's labeled rows and
+    ``opp_deck_major_<bucket>`` the largest class's share of them
+    (``opp_deck_major`` overall). A bucket's accuracy is only readable
+    against its composition: a probe fed constant features (the
+    no-history control) scores exactly one class's share, so an early
+    bucket that is skewed reads far from 0.5 with no signal (#44).
+    """
     stats: Dict[str, float] = {
         "opp_deck_loss": loss_value,
         "opp_deck_labeled": float(len(correct)),
         "opp_deck_acc": sum(correct) / len(correct) if correct else 0.0,
     }
+    if labels is not None:
+        stats["opp_deck_major"] = _majority_share(labels)
     for bucket in _PROBE_TURN_BUCKETS:
         sel = [
             c
@@ -929,6 +951,14 @@ def _probe_stats(
             if _opp_deck_turn_bucket(t) == bucket
         ]
         stats[f"opp_deck_acc_{bucket}"] = sum(sel) / len(sel) if sel else 0.0
+        stats[f"opp_deck_n_{bucket}"] = float(len(sel))
+        if labels is not None:
+            lab_sel = [
+                lab
+                for lab, t in zip(labels, turns)
+                if _opp_deck_turn_bucket(t) == bucket
+            ]
+            stats[f"opp_deck_major_{bucket}"] = _majority_share(lab_sel)
     return stats
 
 
@@ -954,7 +984,12 @@ def opp_deck_loss(
     with torch.no_grad():
         correct = (logits[idx].argmax(-1) == target).to(torch.float32).tolist()
         turns = [int(float(decisions[i].get("turn", 0))) for i in idx]
-    return loss, _probe_stats(correct, turns, float(loss.detach()))
+    return loss, _probe_stats(
+        correct,
+        turns,
+        float(loss.detach()),
+        [labels[i] for i in idx],
+    )
 
 
 def opp_deck_eval(
@@ -985,7 +1020,7 @@ def opp_deck_eval(
                 ]
     if was_training:
         probe.train()
-    stats = _probe_stats(correct, turns)
+    stats = _probe_stats(correct, turns, labels=[labels[i] for i in idx])
     # Accuracy read: the loss key is a training-only stat.
     stats.pop("opp_deck_loss", None)
     return stats
