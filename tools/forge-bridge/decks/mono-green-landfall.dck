@@ -1,0 +1,27 @@
+[shop]
+WinsToUnlock=0
+Credits=999
+MinDifficulty=0
+MaxDifficulty=5
+[metadata]
+Name=mono-green-landfall
+Description=MTGGoldfish 7954749, frozen #2614 pair (pn scripts/data/decks/2614-decks.json)
+Deck Type=constructed
+[Main]
+3 Ba Sing Se
+1 Demolition Field
+4 Earthbender Ascension
+4 Escape Tunnel
+4 Esper Origins
+4 Fabled Passage
+14 Forest
+4 Icetill Explorer
+2 Keen-Eyed Curator
+4 Llanowar Elves
+1 Lumbering Worldwagon
+1 Meltstrider's Resolve
+3 Mightform Harmonizer
+4 Sapling Nursery
+4 Sazh's Chocobo
+2 Shared Roots
+1 Surrak, Elusive Hunter

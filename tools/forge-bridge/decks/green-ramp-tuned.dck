@@ -1,0 +1,21 @@
+[shop]
+WinsToUnlock=0
+Credits=999
+MinDifficulty=0
+MaxDifficulty=5
+[metadata]
+Name=green-ramp-tuned
+Description=Frozen Track 2 pair (pn scripts/data/decks/track2-tuned-decks.json v3)
+Deck Type=constructed
+[Main]
+4 Apothecary Stomper
+4 Druid of the Cowl
+4 Elfsworn Giant
+26 Forest
+4 Llanowar Elves
+2 Oracle's Restoration
+2 Pelakka Wurm
+4 Rabid Bite
+2 Rampaging Baloths
+4 Regal Imperiosaur
+4 Thrashing Brontodon
