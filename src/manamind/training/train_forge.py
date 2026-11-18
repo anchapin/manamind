@@ -558,6 +558,7 @@ def main() -> None:
     ap.add_argument("--deck-b", type=Path, required=True)
     ap.add_argument(
         "--deck-pairs",
+        nargs="+",
         default="",
         help='imitate across deck pairs: space-separated "deckA,deckB"'
         " pairs, one bridge block each (#96 data axis)",
@@ -653,7 +654,13 @@ def main() -> None:
         expert=True,
     )
     deck_pairs = (
-        _parse_deck_pairs(args.deck_pairs) if args.deck_pairs else None
+        _parse_deck_pairs(
+            " ".join(args.deck_pairs)
+            if isinstance(args.deck_pairs, list)
+            else args.deck_pairs
+        )
+        if args.deck_pairs
+        else None
     )
     expert_cmds: Optional[List[List[str]]] = None
     if deck_pairs:
