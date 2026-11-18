@@ -254,10 +254,12 @@ def train(
     played = 0
     state = {"bc_done": bc_done}
     if expert_games > start_game:
-        commands = (
-            list(expert_commands) if expert_commands else [expert_command]
-        )
-        if commands[0] is None:
+        commands: List[Sequence[str]] = []
+        if expert_commands:
+            commands = list(expert_commands)
+        elif expert_command is not None:
+            commands = [expert_command]
+        if not commands:
             raise ValueError("expert_games needs expert_command")
         data_path = out_dir / EXPERT_DATA
         # One bridge block per deck pair; each block gets an even share of
