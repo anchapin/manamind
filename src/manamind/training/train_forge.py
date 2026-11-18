@@ -10,6 +10,11 @@ mode), the network is trained to reproduce its choices, and the value head
 to predict those games' results. ``--bc-epochs`` then makes extra passes
 over every recorded decision before actor-critic training takes over.
 
+``--deck-pairs`` spreads those imitation games over several deck pairs
+("deckA,deckB deckC,deckD ..."), one bridge block per pair, so the BC root
+learns from more than one matchup (#96 data axis). Actor-critic games keep
+playing ``--deck-a`` vs ``--deck-b``.
+
 ``--eval-ckpts a.pt,b.pt`` skips training and plays ``--games`` games per
 checkpoint and mode (``--eval-modes greedy,sample``) with no updates, so a
 post-imitation ``bc.pt`` can be scored against the final ``last.pt``.
@@ -197,6 +202,7 @@ def train(
     shaping_coef: float = 0.0,
     entropy_coef: float = 0.01,
     expert_command: Optional[Sequence[str]] = None,
+    expert_commands: Optional[Sequence[Sequence[str]]] = None,
     expert_games: int = 0,
     bc_epoch_count: int = 0,
     bc_batch: int = 256,
@@ -206,7 +212,9 @@ def train(
     """Run ``games`` games, updating every ``update_every`` games.
 
     Games numbered below ``expert_games`` (counting resumed ones) are
-    imitation games over ``expert_command``; the rest are actor-critic.
+    imitation games over ``expert_command``, or cycled over
+    ``expert_commands`` one bridge block per pair when given; the rest are
+    actor-critic.
     ``last.pt`` is rewritten every ``save_every`` games and at the end, so
     a long run that dies can be resumed with ``--resume``.
     """
@@ -246,11 +254,29 @@ def train(
     played = 0
     state = {"bc_done": bc_done}
     if expert_games > start_game:
-        if expert_command is None:
+        commands = (
+            list(expert_commands) if expert_commands else [expert_command]
+        )
+        if commands[0] is None:
             raise ValueError("expert_games needs expert_command")
         data_path = out_dir / EXPERT_DATA
-        with ForgeEnv(expert_command, cwd=cwd) as env:
+        # One bridge block per deck pair; each block gets an even share of
+        # the imitation games (the last block absorbs the remainder).
+        block = max(1, -(-expert_games // len(commands)))
+        env: Optional[ForgeEnv] = None
+        active: Optional[int] = None
+        expert_summary: Optional[Dict[str, Any]] = None
+        try:
             while played < games and start_game + played < expert_games:
+                pair = min(played // block, len(commands) - 1)
+                if pair != active:
+                    if env is not None:
+                        if env.summary:
+                            expert_summary = env.summary
+                        env.close()
+                    env = ForgeEnv(commands[pair], cwd=cwd)
+                    active = pair
+                assert env is not None
                 eg = play_expert_game(env)
                 if eg is None:
                     break
@@ -272,6 +298,7 @@ def train(
                 rec: Dict[str, Any] = {
                     "game": start_game + played,
                     "phase": "imitate",
+                    "pair": pair,
                     "result": eg["info"].get("result"),
                     "turns": eg["info"].get("turns"),
                     "decisions": len(eg["decisions"]),
@@ -308,7 +335,11 @@ def train(
                         env,
                         state,
                     )
-            expert_summary = env.summary
+        finally:
+            if env is not None:
+                if env.summary:
+                    expert_summary = env.summary
+                env.close()
         if start_game + played >= expert_games and not state["bc_done"]:
             if bc_epoch_count > 0:
                 bc_epochs(
@@ -458,6 +489,21 @@ def evaluate(
     return summary
 
 
+def _parse_deck_pairs(spec: str) -> List[tuple[Path, Path]]:
+    """Parse "deckA,deckB deckC,deckD" into deck pairs (#96 data axis)."""
+    pairs: List[tuple[Path, Path]] = []
+    for chunk in spec.split():
+        parts = chunk.split(",")
+        if len(parts) != 2 or not all(parts):
+            raise ValueError(
+                f"--deck-pairs entry {chunk!r} is not deckA,deckB"
+            )
+        pairs.append((Path(parts[0]), Path(parts[1])))
+    if not pairs:
+        raise ValueError("--deck-pairs is empty")
+    return pairs
+
+
 def _save(
     net: ForgePointerNet,
     opt: torch.optim.Optimizer,
@@ -508,6 +554,12 @@ def main() -> None:
     ap.add_argument("--java", default="java")
     ap.add_argument("--deck-a", type=Path, required=True)
     ap.add_argument("--deck-b", type=Path, required=True)
+    ap.add_argument(
+        "--deck-pairs",
+        default="",
+        help='imitate across deck pairs: space-separated "deckA,deckB"'
+        " pairs, one bridge block each (#96 data axis)",
+    )
     ap.add_argument("--games", type=int, default=20)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--update-every", type=int, default=4)
@@ -598,6 +650,25 @@ def main() -> None:
         java=args.java,
         expert=True,
     )
+    deck_pairs = (
+        _parse_deck_pairs(args.deck_pairs) if args.deck_pairs else None
+    )
+    expert_cmds: Optional[List[List[str]]] = None
+    if deck_pairs:
+        if args.expert_games <= 0:
+            raise SystemExit("--deck-pairs needs --expert-games > 0")
+        expert_cmds = [
+            bridge_command(
+                args.forge_dir,
+                args.bridge_out,
+                args.games,
+                a.resolve(),
+                b.resolve(),
+                java=args.java,
+                expert=True,
+            )
+            for a, b in deck_pairs
+        ]
     meta = train(
         cmd,
         args.forge_dir,
@@ -612,6 +683,7 @@ def main() -> None:
         shaping_coef=args.shaping,
         entropy_coef=args.entropy_coef,
         expert_command=expert_cmd,
+        expert_commands=expert_cmds,
         expert_games=args.expert_games,
         bc_epoch_count=args.bc_epochs,
         bc_batch=args.bc_batch,
