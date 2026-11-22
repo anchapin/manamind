@@ -120,6 +120,7 @@ def bc_epochs(
     batch: int = 256,
     seed: int = 0,
     log: Optional[Path] = None,
+    val_chunk: int = 4096,
 ) -> List[Dict[str, Any]]:
     """Extra behaviour-cloning passes; every 10th game is held out."""
     train_set: List[tuple] = []
@@ -149,16 +150,29 @@ def bc_epochs(
             "train_nll": round(sum(tr) / max(len(tr), 1), 4),
         }
         if val_set:
+            # Chunked: materializing every val output in one list peaks at
+            # several GB on a 16k-game corpus (run 44825300109 died there).
+            # Per-chunk means combined by weight reproduce one big mean.
+            n_nll = n_acc = n_value = 0.0
+            n_used = n_rows = 0
             with torch.no_grad():
-                _, vs = imitation_loss(
-                    [net.imitate(d) for d, _ in val_set],
-                    [r for _, r in val_set],
-                )
+                for i in range(0, len(val_set), val_chunk):
+                    rows = val_set[i : i + val_chunk]
+                    _, vs = imitation_loss(
+                        [net.imitate(d) for d, _ in rows],
+                        [r for _, r in rows],
+                    )
+                    used = round(vs["labelled_frac"] * len(rows))
+                    n_rows += len(rows)
+                    n_used += used
+                    n_value += vs["value"] * len(rows)
+                    n_nll += vs["bc_nll"] * used
+                    n_acc += vs["bc_acc"] * used
             rec.update(
                 val_rows=len(val_set),
-                val_nll=round(vs["bc_nll"], 4),
-                val_acc=round(vs["bc_acc"], 4),
-                val_value=round(vs["value"], 4),
+                val_nll=round(n_nll / n_used, 4) if n_used else 0.0,
+                val_acc=round(n_acc / n_used, 4) if n_used else 0.0,
+                val_value=round(n_value / n_rows, 4),
             )
         out.append(rec)
         if log is not None:
@@ -253,6 +267,8 @@ def train(
     t0 = time.time()
     played = 0
     state = {"bc_done": bc_done}
+    data_path = out_dir / EXPERT_DATA
+    expert_summary: Optional[Dict[str, Any]] = None
     if expert_games > start_game:
         commands: List[Sequence[str]] = []
         if expert_commands:
@@ -261,13 +277,11 @@ def train(
             commands = [expert_command]
         if not commands:
             raise ValueError("expert_games needs expert_command")
-        data_path = out_dir / EXPERT_DATA
         # One bridge block per deck pair; each block gets an even share of
         # the imitation games (the last block absorbs the remainder).
         block = max(1, -(-expert_games // len(commands)))
         env: Optional[ForgeEnv] = None
         active: Optional[int] = None
-        expert_summary: Optional[Dict[str, Any]] = None
         try:
             while played < games and start_game + played < expert_games:
                 pair = min(played // block, len(commands) - 1)
@@ -342,31 +356,38 @@ def train(
                 if env.summary:
                     expert_summary = env.summary
                 env.close()
-        if start_game + played >= expert_games and not state["bc_done"]:
-            if bc_epoch_count > 0:
-                bc_epochs(
-                    net,
-                    opt,
-                    load_expert_data(data_path),
-                    bc_epoch_count,
-                    batch=bc_batch,
-                    seed=seed,
-                    log=log_path,
-                )
-            state["bc_done"] = True
-            _save(
+    if (
+        expert_games > 0
+        and start_game + played >= expert_games
+        and not state["bc_done"]
+    ):
+        # Outside the ``expert_games > start_game`` guard so a resume whose
+        # checkpoint sits exactly at ``expert_games`` still runs the BC
+        # passes (run 44939730233 skipped them and burned the RL budget).
+        if bc_epoch_count > 0:
+            bc_epochs(
                 net,
                 opt,
-                out_dir,
-                start_game,
-                played,
-                history,
-                t0,
-                None,
-                state,
-                expert_summary,
+                load_expert_data(data_path),
+                bc_epoch_count,
+                batch=bc_batch,
+                seed=seed,
+                log=log_path,
             )
-            shutil.copyfile(out_dir / "last.pt", out_dir / "bc.pt")
+        state["bc_done"] = True
+        _save(
+            net,
+            opt,
+            out_dir,
+            start_game,
+            played,
+            history,
+            t0,
+            None,
+            state,
+            expert_summary,
+        )
+        shutil.copyfile(out_dir / "last.pt", out_dir / "bc.pt")
     if played >= games:
         return _save(
             net, opt, out_dir, start_game, played, history, t0, None, state
