@@ -112,6 +112,31 @@ def load_expert_data(path: Path) -> List[Dict[str, Any]]:
     return games
 
 
+class ExpertCorpus(Sequence[Dict[str, Any]]):
+    """Re-iterable, lazy view of the imitation corpus (#96 memory).
+
+    Holds one gzip-decompressed JSON line per game (a few hundred MB at
+    16k games) and parses a game only when indexed, so the multi-GB
+    parsed-decision form never sits in RAM across a BC epoch.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lines: List[bytes] = []
+        if path.exists():
+            with gzip.open(path, "rb") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        self.lines.append(line)
+
+    def __len__(self) -> int:
+        return len(self.lines)
+
+    def __getitem__(self, index: Any) -> Any:
+        return json.loads(self.lines[index])
+
+
 def bc_epochs(
     net: ForgePointerNet,
     opt: torch.optim.Optimizer,
@@ -121,55 +146,89 @@ def bc_epochs(
     seed: int = 0,
     log: Optional[Path] = None,
     val_chunk: int = 4096,
+    buffer_rows: int = 1 << 17,
 ) -> List[Dict[str, Any]]:
-    """Extra behaviour-cloning passes; every 10th game is held out."""
-    train_set: List[tuple] = []
-    val_set: List[tuple] = []
-    for i, g in enumerate(games):
-        rows = list(zip(g["decisions"], g["returns"]))
-        (val_set if i % 10 == 9 else train_set).extend(rows)
+    """Extra behaviour-cloning passes; every 10th game is held out.
+
+    Rows stream through a bounded shuffle buffer and games are parsed
+    one index at a time, so an :class:`ExpertCorpus` never holds the
+    corpus as parsed Python objects (the 16k-game corpus killed runs
+    44825300109 and 44986357644 as silent exit-1s mid-BC).
+    """
+    n = len(games)
+    train_idx = [i for i in range(n) if i % 10 != 9]
+    val_idx = [i for i in range(n) if i % 10 == 9]
     rng = random.Random(seed)
     out: List[Dict[str, Any]] = []
     for ep in range(1, epochs + 1):
-        rng.shuffle(train_set)
+        print(f"BC: epoch {ep}/{epochs} start", flush=True)
         net.train()
+        order = list(train_idx)
+        rng.shuffle(order)
+        buf: List[tuple] = []
         tr: List[float] = []
-        for i in range(0, len(train_set), batch):
-            rows = train_set[i : i + batch]
-            loss, st = imitation_loss(
-                [net.imitate(d) for d, _ in rows], [r for _, r in rows]
-            )
-            opt.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            opt.step()
-            tr.append(st["bc_nll"])
+        seen = 0
+
+        def drain() -> None:
+            nonlocal seen
+            if not buf:
+                return
+            rng.shuffle(buf)
+            for j in range(0, len(buf), batch):
+                rows = buf[j : j + batch]
+                loss, st = imitation_loss(
+                    [net.imitate(d) for d, _ in rows],
+                    [r for _, r in rows],
+                )
+                opt.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+                opt.step()
+                tr.append(st["bc_nll"])
+            seen += len(buf)
+            buf.clear()
+            print(f"BC: epoch {ep} trained {seen} rows", flush=True)
+
+        for i in order:
+            g = games[i]
+            buf.extend(zip(g["decisions"], g["returns"]))
+            if len(buf) >= buffer_rows:
+                drain()
+        drain()
         rec: Dict[str, Any] = {
             "bc_epoch": ep,
-            "train_rows": len(train_set),
+            "train_rows": seen,
             "train_nll": round(sum(tr) / max(len(tr), 1), 4),
         }
-        if val_set:
-            # Chunked: materializing every val output in one list peaks at
-            # several GB on a 16k-game corpus (run 44825300109 died there).
-            # Per-chunk means combined by weight reproduce one big mean.
+        if val_idx:
             n_nll = n_acc = n_value = 0.0
             n_used = n_rows = 0
+
+            def eval_chunk(rows: List[tuple]) -> None:
+                nonlocal n_nll, n_acc, n_value, n_used, n_rows
+                _, vs = imitation_loss(
+                    [net.imitate(d) for d, _ in rows],
+                    [r for _, r in rows],
+                )
+                used = round(vs["labelled_frac"] * len(rows))
+                n_rows += len(rows)
+                n_used += used
+                n_value += vs["value"] * len(rows)
+                n_nll += vs["bc_nll"] * used
+                n_acc += vs["bc_acc"] * used
+
+            chunk: List[tuple] = []
             with torch.no_grad():
-                for i in range(0, len(val_set), val_chunk):
-                    rows = val_set[i : i + val_chunk]
-                    _, vs = imitation_loss(
-                        [net.imitate(d) for d, _ in rows],
-                        [r for _, r in rows],
-                    )
-                    used = round(vs["labelled_frac"] * len(rows))
-                    n_rows += len(rows)
-                    n_used += used
-                    n_value += vs["value"] * len(rows)
-                    n_nll += vs["bc_nll"] * used
-                    n_acc += vs["bc_acc"] * used
+                for i in val_idx:
+                    g = games[i]
+                    chunk.extend(zip(g["decisions"], g["returns"]))
+                    if len(chunk) >= val_chunk:
+                        eval_chunk(chunk)
+                        chunk = []
+                if chunk:
+                    eval_chunk(chunk)
             rec.update(
-                val_rows=len(val_set),
+                val_rows=n_rows,
                 val_nll=round(n_nll / n_used, 4) if n_used else 0.0,
                 val_acc=round(n_acc / n_used, 4) if n_used else 0.0,
                 val_value=round(n_value / n_rows, 4),
@@ -178,6 +237,7 @@ def bc_epochs(
         if log is not None:
             with log.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
+        print(f"BC: epoch {ep} done rec={rec}", flush=True)
     return out
 
 
@@ -260,6 +320,10 @@ def train(
         opt.load_state_dict(ckpt["optimizer"])
         start_game = int(ckpt["meta"]["games"])
         bc_done = bool(ckpt["meta"].get("bc_done", False))
+        print(
+            f"RESUME: start_game={start_game} bc_done={bc_done}",
+            flush=True,
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "log.jsonl"
     history: List[Dict[str, Any]] = []
@@ -368,7 +432,7 @@ def train(
             bc_epochs(
                 net,
                 opt,
-                load_expert_data(data_path),
+                ExpertCorpus(data_path),
                 bc_epoch_count,
                 batch=bc_batch,
                 seed=seed,

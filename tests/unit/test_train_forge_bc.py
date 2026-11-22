@@ -161,3 +161,57 @@ def test_bc_epochs_chunked_val_matches_single_pass():
     assert a["val_rows"] == b["val_rows"] == 15
     for key in ("val_nll", "val_acc", "val_value"):
         assert abs(a[key] - b[key]) < 1e-6, key
+
+
+def _write_corpus(path, games):
+    import gzip
+
+    with gzip.open(path, "wt") as f:
+        for g in games:
+            f.write(
+                json.dumps(
+                    {
+                        "decisions": g["decisions"],
+                        "returns": g["returns"],
+                        "result": "win",
+                    }
+                )
+                + "\n"
+            )
+
+
+def test_expert_corpus_stores_raw_lines_only(tmp_path):
+    games = _fake_games(3, 2)
+    path = tmp_path / "expert_data.jsonl.gz"
+    _write_corpus(path, games)
+    corpus = tf.ExpertCorpus(path)
+    assert len(corpus) == 3
+    assert all(isinstance(x, bytes) for x in corpus.lines)
+    assert corpus[0]["decisions"] == games[0]["decisions"]
+
+
+def test_bc_epochs_corpus_stream_matches_list(tmp_path):
+    games = _fake_games(30, 5)
+    path = tmp_path / "expert_data.jsonl.gz"
+    _write_corpus(path, games)
+    corpus = tf.ExpertCorpus(path)
+    torch.manual_seed(0)
+    net_a = FakeImitateNet()
+    opt_a = torch.optim.Adam(net_a.parameters(), lr=0.01)
+    from_list = tf.bc_epochs(net_a, opt_a, games, epochs=2, batch=8, seed=0)
+    torch.manual_seed(0)
+    net_b = FakeImitateNet()
+    opt_b = torch.optim.Adam(net_b.parameters(), lr=0.01)
+    from_corpus = tf.bc_epochs(net_b, opt_b, corpus, epochs=2, batch=8, seed=0)
+    assert from_list == from_corpus
+
+
+def test_bc_epochs_small_buffer_covers_all_rows():
+    games = _fake_games(30, 5)
+    torch.manual_seed(0)
+    net = FakeImitateNet()
+    opt = torch.optim.Adam(net.parameters(), lr=0.01)
+    recs = tf.bc_epochs(
+        net, opt, games, epochs=1, batch=8, seed=0, buffer_rows=32
+    )
+    assert recs[0]["train_rows"] == 135
