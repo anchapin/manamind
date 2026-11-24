@@ -30,9 +30,12 @@ Example (short smoke run)::
 from __future__ import annotations
 
 import argparse
+import ctypes
+import gc
 import gzip
 import json
 import random
+import resource
 import shutil
 import time
 from pathlib import Path
@@ -51,6 +54,26 @@ from manamind.models.forge_pointer import (
 )
 
 EXPERT_DATA = "expert_data.jsonl.gz"
+
+
+def _trim_heap(tag: str) -> None:
+    """Release freed allocator arenas and log peak RSS (#152).
+
+    A long-lived training process churns millions of tensors; CPython and
+    glibc keep fragmented arenas alive long after the tensors are freed,
+    so RSS sits well above live data. ``malloc_trim`` returns those pages
+    before a fresh multi-GB allocation (the BC corpus load) needs them.
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # pragma: no cover - non-glibc or non-Linux hosts
+        pass
+    try:
+        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:  # pragma: no cover - platforms without resource
+        rss_kb = 0
+    print(f"RSS[{tag}]: maxrss={rss_kb // 1024} MB", flush=True)
 
 
 def play_game(
@@ -429,6 +452,7 @@ def train(
         # checkpoint sits exactly at ``expert_games`` still runs the BC
         # passes (run 44939730233 skipped them and burned the RL budget).
         if bc_epoch_count > 0:
+            _trim_heap("pre-bc")
             bc_epochs(
                 net,
                 opt,
@@ -624,6 +648,14 @@ def _save(
         tmp,
     )
     tmp.replace(out_dir / "last.pt")
+    try:
+        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(
+            f"SAVE: games={meta['games']} maxrss={rss_kb // 1024} MB",
+            flush=True,
+        )
+    except Exception:  # pragma: no cover - platforms without resource
+        pass
     return meta
 
 
