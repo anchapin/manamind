@@ -101,6 +101,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export MALLOC_ARENA_MAX=2
           RUN_DIR="$HOME/manamind-runs/$RUN_NAME"
           mkdir -p "$RUN_DIR" results
           RESUME=()
@@ -110,7 +111,7 @@ jobs:
             --forge-dir "$FORGE_DIR" --java "$JAVA_HOME/bin/java" \
             --deck-a tools/forge-bridge/decks/rg.dck \
             --deck-b tools/forge-bridge/decks/ub.dck \
-            --out "$RUN_DIR" "${RESUME[@]}" 2>&1 \
+            --out "$RUN_DIR" "${RESUME[@]}" 2> "results/forge_${RUN_NAME}_stderr.log" \
             | grep -v '^\(DEBUG\|INFO\)' | tail -n 2000 > "results/forge_${RUN_NAME}_run.log"
           tail -5 "results/forge_${RUN_NAME}_run.log"
 
