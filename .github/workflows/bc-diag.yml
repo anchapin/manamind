@@ -1,0 +1,97 @@
+# Read-only diagnostics for the #152 BC-entry SIGTERM deaths. Manual dispatch
+# only, nothing runs on pushes or PRs. Writes nothing outside results/.
+name: BC diagnostics on home PC
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-pc-bc-diag
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: [self-hosted, linux, manamind-train]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System state snapshot
+        if: always()
+        run: |
+          set +e
+          mkdir -p results
+          {
+            echo "== whoami/id =="; id
+            echo "== uptime/load =="; uptime
+            echo "== free -h =="; free -h
+            echo "== swapon =="; swapon --show
+            echo "== memory PSI =="; cat /proc/pressure/memory
+            echo "== cpu PSI =="; cat /proc/pressure/cpu 2>/dev/null || true
+            echo "== top memory processes =="; ps aux --sort=-rss | head -15
+            echo "== java leftovers =="; ps aux | grep -i java | grep -v grep || echo none
+            echo "== oom daemon states =="
+            for u in systemd-oomd earlyoom oomd nohang; do echo -n "$u: "; systemctl is-active $u 2>&1; done
+            systemctl status systemd-oomd --no-pager 2>&1 | head -8
+            echo "== runner services =="; systemctl list-units --all '*actions*' --no-pager 2>&1 | head -10
+            echo "== recent reboots =="; last -x reboot 2>/dev/null | head -5
+            echo "== crontab =="; crontab -l 2>&1 | head -20
+            echo "== run dir =="; ls -lh "$HOME/manamind-runs/forge_bc_pairs3/" 2>&1
+          } > results/diag_system.txt 2>&1
+
+      - name: Journal around the four BC-entry deaths
+        if: always()
+        run: |
+          set +e
+          mkdir -p results
+          {
+            echo "== journalctl availability test =="
+            journalctl --no-pager -n 1 2>&1 | head -3
+            echo "== kernel oom/kill lines since Sat Nov 22 =="
+            journalctl -k --since "2026-11-22 00:00" --no-pager 2>&1 | grep -iE "oom|killed process|out of memory|memory cgroup" | tail -60
+            echo "== systemd-oomd unit log since Sat Nov 22 =="
+            journalctl -u systemd-oomd --since "2026-11-22 00:00" --no-pager 2>&1 | tail -60
+            echo "== tonight window 18:50-19:05 (resume run 45513888967 train step) full lines =="
+            journalctl --since "2026-11-24 18:50" --until "2026-11-24 19:05" --no-pager 2>&1 | tail -200
+          } > results/diag_journal.txt 2>&1
+
+      - name: Corpus load probe (reproduce BC entry in isolation)
+        if: always()
+        run: |
+          set +e
+          mkdir -p results
+          cat > probe.py <<'PY'
+          import gzip, resource, time
+          from pathlib import Path
+          p = Path.home() / "manamind-runs/forge_bc_pairs3/expert_data.jsonl.gz"
+          print(f"probe start on {p}", flush=True)
+          t0 = time.time()
+          lines = []
+          n = 0
+          with gzip.open(p, "rb") as f:
+              for line in f:
+                  line = line.strip()
+                  if line:
+                      lines.append(line)
+                  n += 1
+                  if n % 200000 == 0:
+                      print(f"{n} lines, {time.time()-t0:.1f}s, maxrss={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss//1024} MB", flush=True)
+          print(f"DONE kept={len(lines)} total={n} {time.time()-t0:.1f}s maxrss={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss//1024} MB", flush=True)
+          PY
+          timeout 240 python3 probe.py > probe_stdout.log 2> probe_stderr.log
+          echo "probe exit=$?" | tee results/diag_probe_exit.txt
+          echo "--- probe stdout ---" >> results/diag_probe_exit.txt
+          cat probe_stdout.log >> results/diag_probe_exit.txt
+          echo "--- probe stderr ---" >> results/diag_probe_exit.txt
+          cat probe_stderr.log >> results/diag_probe_exit.txt
+          cp probe_stdout.log probe_stderr.log results/ 2>/dev/null || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bc-diag-results
+          path: results/*
