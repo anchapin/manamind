@@ -30,6 +30,7 @@ Example (short smoke run)::
 from __future__ import annotations
 
 import argparse
+import array
 import ctypes
 import gc
 import gzip
@@ -39,7 +40,7 @@ import resource
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import IO, Any, Dict, List, Optional, Sequence
 
 import torch
 
@@ -138,26 +139,50 @@ def load_expert_data(path: Path) -> List[Dict[str, Any]]:
 class ExpertCorpus(Sequence[Dict[str, Any]]):
     """Re-iterable, lazy view of the imitation corpus (#96 memory).
 
-    Holds one gzip-decompressed JSON line per game (a few hundred MB at
-    16k games) and parses a game only when indexed, so the multi-GB
-    parsed-decision form never sits in RAM across a BC epoch.
+    Decompresses the gz corpus once into a plain jsonl sibling (an
+    atomic replace, so an interrupted decompress never leaves a
+    partial file), indexes each game's byte offset, and parses a game
+    only when indexed. Neither the multi-GB parsed-decision form nor
+    the multi-GB line cache that earlyoom killed mid-load (#152) sits
+    in RAM: the index is 8 bytes per game, and the plain file is read
+    by seek on every access.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.lines: List[bytes] = []
-        if path.exists():
-            with gzip.open(path, "rb") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        self.lines.append(line)
+        self._plain = path.with_suffix("") if path.suffix == ".gz" else path
+        self._offsets: array.array[int] = array.array("q")
+        self._fh: Optional[IO[bytes]] = None
+        if path.exists() and not self._plain.exists():
+            tmp = self._plain.parent / (self._plain.name + ".tmp")
+            if tmp.exists():
+                tmp.unlink()
+            with gzip.open(path, "rb") as src, tmp.open("wb") as dst:
+                for line in src:
+                    if line.strip():
+                        self._offsets.append(dst.tell())
+                        dst.write(line)
+            tmp.replace(self._plain)
+        elif self._plain.exists():
+            with self._plain.open("rb") as f:
+                while True:
+                    offset = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    if line.strip():
+                        self._offsets.append(offset)
+        if self._offsets:
+            self._fh = self._plain.open("rb")
 
     def __len__(self) -> int:
-        return len(self.lines)
+        return len(self._offsets)
 
     def __getitem__(self, index: Any) -> Any:
-        return json.loads(self.lines[index])
+        if self._fh is None:
+            raise IndexError(index)
+        self._fh.seek(self._offsets[index])
+        return json.loads(self._fh.readline())
 
 
 def bc_epochs(
