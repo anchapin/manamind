@@ -180,14 +180,28 @@ def _write_corpus(path, games):
             )
 
 
-def test_expert_corpus_stores_raw_lines_only(tmp_path):
+def test_expert_corpus_indexed_without_line_cache(tmp_path):
     games = _fake_games(3, 2)
     path = tmp_path / "expert_data.jsonl.gz"
     _write_corpus(path, games)
     corpus = tf.ExpertCorpus(path)
     assert len(corpus) == 3
-    assert all(isinstance(x, bytes) for x in corpus.lines)
+    assert not hasattr(corpus, "lines")
     assert corpus[0]["decisions"] == games[0]["decisions"]
+    assert corpus[2]["decisions"] == games[2]["decisions"]
+    assert (tmp_path / "expert_data.jsonl").exists()
+
+
+def test_expert_corpus_reuses_decompressed_plain(tmp_path):
+    games = _fake_games(3, 2)
+    path = tmp_path / "expert_data.jsonl.gz"
+    _write_corpus(path, games)
+    first = tf.ExpertCorpus(path)
+    assert len(first) == 3
+    path.unlink()
+    second = tf.ExpertCorpus(tmp_path / "expert_data.jsonl")
+    assert len(second) == 3
+    assert second[1]["decisions"] == games[1]["decisions"]
 
 
 def test_bc_epochs_corpus_stream_matches_list(tmp_path):
