@@ -88,12 +88,12 @@ public class PipeBench {
     /** Unspent mana in the pool, one int per color, WUBRGC order. */
     static String pool(Player me) {
         forge.game.mana.ManaPool p = me.getManaPool();
-        return p.getAmountOfColor(MagicColor.Constant.WHITE) + ","
-                + p.getAmountOfColor(MagicColor.Constant.BLUE) + ","
-                + p.getAmountOfColor(MagicColor.Constant.BLACK) + ","
-                + p.getAmountOfColor(MagicColor.Constant.RED) + ","
-                + p.getAmountOfColor(MagicColor.Constant.GREEN) + ","
-                + p.getAmountOfColor(MagicColor.Constant.COLORLESS);
+        return p.getAmountOfColor(MagicColor.WHITE) + ","
+                + p.getAmountOfColor(MagicColor.BLUE) + ","
+                + p.getAmountOfColor(MagicColor.BLACK) + ","
+                + p.getAmountOfColor(MagicColor.RED) + ","
+                + p.getAmountOfColor(MagicColor.GREEN) + ","
+                + p.getAmountOfColor(MagicColor.COLORLESS);
     }
 
     static String card(Card c) {
