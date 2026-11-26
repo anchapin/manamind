@@ -6,12 +6,14 @@ import forge.deck.Deck;
 import forge.deck.io.DeckSerializer;
 import forge.game.*;
 import forge.game.card.Card;
+import forge.game.card.CounterEnumType;
 import forge.game.combat.Combat;
 import forge.game.combat.CombatUtil;
 import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
 import forge.game.spellability.SpellAbility;
 import forge.game.zone.ZoneType;
+import forge.card.MagicColor;
 import forge.model.FModel;
 import forge.player.GamePlayerUtil;
 import java.io.*;
@@ -68,6 +70,32 @@ public class PipeBench {
         return j.toString();
     }
 
+    /** First few readable keywords, comma-joined (feat1 schema v4). */
+    static String kws(Card c) {
+        StringBuilder b = new StringBuilder();
+        int n = 0;
+        for (Object k : c.getKeywords()) {
+            if (n >= 8) break;
+            String s = String.valueOf(k);
+            if (s.isEmpty() || s.length() > 40) continue;
+            if (b.length() > 0) b.append(',');
+            b.append(s);
+            n++;
+        }
+        return b.toString();
+    }
+
+    /** Unspent mana in the pool, one int per color, WUBRGC order. */
+    static String pool(Player me) {
+        forge.game.mana.ManaPool p = me.getManaPool();
+        return p.getAmountOfColor(MagicColor.Constant.WHITE) + ","
+                + p.getAmountOfColor(MagicColor.Constant.BLUE) + ","
+                + p.getAmountOfColor(MagicColor.Constant.BLACK) + ","
+                + p.getAmountOfColor(MagicColor.Constant.RED) + ","
+                + p.getAmountOfColor(MagicColor.Constant.GREEN) + ","
+                + p.getAmountOfColor(MagicColor.Constant.COLORLESS);
+    }
+
     static String card(Card c) {
         return "{\"name\":" + q(c.getName())
                 + ",\"type\":" + q(String.valueOf(c.getType()))
@@ -78,7 +106,11 @@ public class PipeBench {
                 + ",\"power\":" + (c.isCreature() ? c.getNetPower() : 0)
                 + ",\"toughness\":" + (c.isCreature() ? c.getNetToughness() : 0)
                 + ",\"tapped\":" + c.isTapped()
-                + ",\"sick\":" + c.isSick() + "}";
+                + ",\"sick\":" + c.isSick()
+                + ",\"kw\":" + q(kws(c))
+                + ",\"dmg\":" + c.getDamage()
+                + ",\"p1p1\":" + c.getCounters(CounterEnumType.P1P1)
+                + ",\"m1m1\":" + c.getCounters(CounterEnumType.M1M1) + "}";
     }
 
     static String cards(List<Card> cs) {
@@ -93,6 +125,7 @@ public class PipeBench {
                 + ",\"phase\":" + q(String.valueOf(g.getPhaseHandler().getPhase()))
                 + ",\"active\":" + (g.getPhaseHandler().getPlayerTurn() == me)
                 + ",\"life\":[" + me.getLife() + "," + opp.getLife() + "]"
+                + ",\"mana\":[" + pool(me) + "]"
                 + ",\"hand\":" + cards(new ArrayList<>(me.getCardsIn(ZoneType.Hand)))
                 + ",\"opp_hand_size\":" + opp.getCardsIn(ZoneType.Hand).size()
                 + ",\"battlefield\":" + cards(new ArrayList<>(me.getCardsIn(ZoneType.Battlefield)))

@@ -1,7 +1,8 @@
 """Real-card network with pointer heads for ForgeEnv decisions (#76).
 
 Cards are encoded from the bridge's JSON (type flags, mana value, color
-pips, power/toughness, tapped, sick) plus a hashed name embedding, so new
+pips, power/toughness, tapped, sick, plus schema-v4 keyword flags, marked
+damage, +-1/+1 counters, and the pool's unspent mana) plus a hashed name embedding, so new
 cards need no vocabulary change. Zones are pooled DeepSets-style. The
 policy heads score whatever options Forge offers, so the action space is
 variable-length:
@@ -52,6 +53,26 @@ TYPE_WORDS = (
     "aura",
 )
 PIPS = ("W", "U", "B", "R", "G", "C", "X")
+# Combat-relevant keyword flags read off the bridge's "kw" string
+# (feat1 schema v4). A keyword matches by whole word, so "Ward 2" and
+# "Protection: black" hit their base entries; anything else is ignored.
+KEYWORDS = (
+    "flying",
+    "deathtouch",
+    "defender",
+    "haste",
+    "hexproof",
+    "indestructible",
+    "lifelink",
+    "menace",
+    "reach",
+    "trample",
+    "vigilance",
+    "first strike",
+    "double strike",
+    "ward",
+    "protection",
+)
 PHASES = (
     "UNTAP",
     "UPKEEP",
@@ -68,8 +89,10 @@ PHASES = (
     "CLEANUP",
 )
 DECISION_TYPES = ("priority", "attack", "block")
-CARD_FEATURES = len(TYPE_WORDS) + 5 + len(PIPS) + 1
-GLOBAL_FEATURES = 10 + len(PHASES) + 1 + len(DECISION_TYPES)
+CARD_FEATURES = (
+    len(TYPE_WORDS) + 5 + len(PIPS) + 1 + len(KEYWORDS) + 3
+)
+GLOBAL_FEATURES = 10 + 6 + len(PHASES) + 1 + len(DECISION_TYPES)
 _COST_SYMBOL = re.compile(r"\{([^}]*)\}")
 
 # Opponent-history features (manamind #44): the summary planar-nexus's
@@ -138,6 +161,26 @@ def card_features(card: Dict[str, Any]) -> List[float]:
                 pips[ch] += 1.0
     feats += [pips[p] / 5.0 for p in PIPS]
     feats.append(generic / 10.0)
+    # Schema v4 (manamind feat1): the bridge emits the card's first few
+    # keywords ("kw"), marked damage ("dmg") and +-1/+1 counter counts.
+    # Decisions recorded before v4 lack the keys, so they encode as zeros
+    # and train unchanged.
+    kws = card.get("kw") or ""
+    if isinstance(kws, str):
+        kwset = {part.strip().lower() for part in kws.split(",") if part.strip()}
+    else:
+        kwset = {str(k).strip().lower() for k in kws}
+    feats += [
+        1.0
+        if any(k == w or w.startswith(k + " ") or w.startswith(k + ":") for k in kwset)
+        else 0.0
+        for w in KEYWORDS
+    ]
+    feats += [
+        min(float(card.get("dmg", 0)), 10.0) / 10.0,
+        min(float(card.get("p1p1", 0)), 5.0) / 5.0,
+        min(float(card.get("m1m1", 0)), 5.0) / 5.0,
+    ]
     return feats
 
 
@@ -157,6 +200,12 @@ def global_features(d: Decision) -> List[float]:
         float(len(d.get("graveyard", []))) / 20.0,
         float(len(d.get("opp_graveyard", []))) / 20.0,
     ]
+    # Schema v4 (manamind feat1): the deciding seat's unspent mana pool,
+    # six ints in WUBRGC order from the bridge's "mana" view key. Missing
+    # (every decision recorded before v4) encodes as zeros.
+    mana = d.get("mana") or [0, 0, 0, 0, 0, 0]
+    feats += [min(float(v), 20.0) / 10.0 for v in list(mana)[:6]]
+    feats += [0.0] * (6 - len(list(mana)[:6]))
     phase = str(d.get("phase", ""))
     feats += [1.0 if phase == p else 0.0 for p in PHASES]
     feats.append(0.0 if phase in PHASES else 1.0)
