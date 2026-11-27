@@ -2,10 +2,10 @@
 
 Cards are encoded from the bridge's JSON (type flags, mana value, color
 pips, power/toughness, tapped, sick, plus schema-v4 keyword flags, marked
-damage, +-1/+1 counters, and the pool's unspent mana) plus a hashed name embedding, so new
-cards need no vocabulary change. Zones are pooled DeepSets-style. The
-policy heads score whatever options Forge offers, so the action space is
-variable-length:
+damage, +-1/+1 counters, and the pool's unspent mana) plus a hashed name
+embedding, so new cards need no vocabulary change. Zones are pooled
+DeepSets-style. The policy heads score whatever options Forge offers, so
+the action space is variable-length:
 
 * priority: one logit per offered option plus a learned "pass" token
 * attack: an independent attack/no-attack logit per eligible creature
@@ -89,9 +89,7 @@ PHASES = (
     "CLEANUP",
 )
 DECISION_TYPES = ("priority", "attack", "block")
-CARD_FEATURES = (
-    len(TYPE_WORDS) + 5 + len(PIPS) + 1 + len(KEYWORDS) + 3
-)
+CARD_FEATURES = len(TYPE_WORDS) + 5 + len(PIPS) + 1 + len(KEYWORDS) + 3
 GLOBAL_FEATURES = 10 + 6 + len(PHASES) + 1 + len(DECISION_TYPES)
 _COST_SYMBOL = re.compile(r"\{([^}]*)\}")
 
@@ -167,13 +165,20 @@ def card_features(card: Dict[str, Any]) -> List[float]:
     # and train unchanged.
     kws = card.get("kw") or ""
     if isinstance(kws, str):
-        kwset = {part.strip().lower() for part in kws.split(",") if part.strip()}
+        kwset = {
+            part.strip().lower() for part in kws.split(",") if part.strip()
+        }
     else:
         kwset = {str(k).strip().lower() for k in kws}
     feats += [
-        1.0
-        if any(k == w or w.startswith(k + " ") or w.startswith(k + ":") for k in kwset)
-        else 0.0
+        (
+            1.0
+            if any(
+                k == w or w.startswith(k + " ") or w.startswith(k + ":")
+                for k in kwset
+            )
+            else 0.0
+        )
         for w in KEYWORDS
     ]
     feats += [
