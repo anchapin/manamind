@@ -39,6 +39,14 @@ on:
         description: "Search simulations per move"
         required: true
         default: "32"
+      a_schema:
+        description: "Observation schema version for checkpoint A (3 legacy, 4 feat1)"
+        required: true
+        default: "3"
+      b_schema:
+        description: "Observation schema version for checkpoint B (3 legacy, 4 feat1)"
+        required: true
+        default: "3"
       decks:
         description: "Head-to-head deck pair, e.g. red,green (blank = simulator defaults)"
         required: true
@@ -70,6 +78,8 @@ jobs:
       GATE_GAMES: ${{ github.event.inputs.gate_games }}
       ANCHOR_GAMES: ${{ github.event.inputs.anchor_games }}
       SIMS: ${{ github.event.inputs.sims }}
+      A_SCHEMA: ${{ github.event.inputs.a_schema }}
+      B_SCHEMA: ${{ github.event.inputs.b_schema }}
       DECKS: ${{ github.event.inputs.decks }}
       PICK: ${{ github.event.inputs.pick }}
       ISSUE: ${{ github.event.inputs.issue }}
@@ -101,6 +111,8 @@ jobs:
           [[ "$GATE_GAMES" =~ ^[0-9]+$ && "$GATE_GAMES" -gt 0 ]] || { echo "bad gate_games"; exit 1; }
           [[ "$ANCHOR_GAMES" =~ ^[0-9]+$ && "$ANCHOR_GAMES" -gt 0 && $((ANCHOR_GAMES % 2)) -eq 0 ]] || { echo "anchor_games must be a positive even number"; exit 1; }
           [[ "$SIMS" =~ ^[0-9]+$ && "$SIMS" -gt 0 ]] || { echo "bad sims"; exit 1; }
+          [[ "$A_SCHEMA" =~ ^[0-9]+$ && "$A_SCHEMA" -gt 0 ]] || { echo "bad a_schema"; exit 1; }
+          [[ "$B_SCHEMA" =~ ^[0-9]+$ && "$B_SCHEMA" -gt 0 ]] || { echo "bad b_schema"; exit 1; }
           [[ "$PICK" =~ ^(greedy|sample|gumbel)$ ]] || { echo "bad pick"; exit 1; }
           [[ -z "$DECKS" || "$DECKS" =~ ^[A-Za-z0-9_-]+,[A-Za-z0-9_-]+$ ]] || { echo "bad decks"; exit 1; }
           [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]+$ ]] || { echo "bad issue"; exit 1; }
@@ -139,16 +151,18 @@ jobs:
               --baseline "$RUNS/$B_CKPT" \
               --games "$GATE_GAMES" --seed "$H2H_SEED" \
               --sims "$SIMS" --threshold 0.55 --pick "$PICK" \
+              --candidate-schema "$A_SCHEMA" --baseline-schema "$B_SCHEMA" \
               --out "$OUT/h2h.json" "${DECK_ARGS[@]}" ) 2>&1 \
             | grep -v '^\(DEBUG\|INFO\)' | tail -n 300 | tee "$OUT/h2h.log"
           [ -f "$OUT/h2h.json" ] || { echo "head-to-head produced no result"; exit 1; }
-          for pair in "A:$A_CKPT" "B:$B_CKPT"; do
-            tag="${pair%%:*}"; ck="${pair#*:}"
+          for pair in "A:$A_CKPT:$A_SCHEMA" "B:$B_CKPT:$B_SCHEMA"; do
+            tag="${pair%%:*}"; rest="${pair#*:}"; ck="${rest%%:*}"; sk="${rest#*:}"
             # yardstick-pn.ts exits 1 when some games errored but still
             # writes its results; a missing file is a real failure.
             ( cd pn && npx tsx scripts/yardstick-pn.ts \
                 --agent model --model "$RUNS/$ck" \
                 --games "$ANCHOR_GAMES" --seed "$ANCHOR_SEED" --sims "$SIMS" \
+                --schema "$sk" \
                 --out "$OUT/anchor_${tag}.json" ) 2>&1 \
               | grep -v '^\(DEBUG\|INFO\)' | tail -n 300 | tee "$OUT/anchor_${tag}.log"
             [ -f "$OUT/anchor_${tag}.json" ] || { echo "anchor read for $tag produced no result"; exit 1; }
